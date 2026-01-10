@@ -65,11 +65,11 @@ func getOAuthConfigs() map[string]OAuthConfig {
 		},
 	}
 }
-s := getOAuthConfigs()
-	config := c
+
 // Helper function to get OAuth config with dynamic redirect URL
 func getOAuthConfig(provider string, c *gin.Context) OAuthConfig {
-	config := oauthConfigs[provider]
+	configs := getOAuthConfigs()
+	config := configs[provider]
 
 	// Calculate dynamic redirect URL based on request
 	scheme := "http"
