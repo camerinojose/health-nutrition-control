@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -35,33 +36,37 @@ type OAuthConfig struct {
 	UserInfoURL  string
 }
 
-var oauthConfigs = map[string]OAuthConfig{
-	"google": {
-		ClientID:     "202305242390-j2rv98bvv45g10el1pqfdcnnpm9lubcr.apps.googleusercontent.com",
-		ClientSecret: "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",
-		RedirectURL:  "", // Dinámico
-		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		UserInfoURL:  "https://www.googleapis.com/oauth2/v2/userinfo",
-	},
-	"facebook": {
-		ClientID:     "24834868442854995",
-		ClientSecret: "4409ce16b6bb934ca50ef457096e87f7",
-		RedirectURL:  "", // Dinámico
-		AuthURL:      "https://www.facebook.com/v12.0/dialog/oauth",
-		TokenURL:     "https://graph.facebook.com/v12.0/oauth/access_token",
-		UserInfoURL:  "https://graph.facebook.com/me?fields=id,name,email,picture",
-	},
-	"github": {
-		ClientID:     "TU_GITHUB_CLIENT_ID",
-		ClientSecret: "TU_GITHUB_CLIENT_SECRET",
-		RedirectURL:  "", // Dinámico
-		AuthURL:      "https://github.com/login/oauth/authorize",
-		TokenURL:     "https://github.com/login/oauth/access_token",
-		UserInfoURL:  "https://api.github.com/user",
-	},
+// Helper function to get OAuth configs from environment variables
+func getOAuthConfigs() map[string]OAuthConfig {
+	return map[string]OAuthConfig{
+		"google": {
+			ClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+			ClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+			RedirectURL:  "", // Dinámico
+			AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
+			TokenURL:     "https://oauth2.googleapis.com/token",
+			UserInfoURL:  "https://www.googleapis.com/oauth2/v2/userinfo",
+		},
+		"facebook": {
+			ClientID:     os.Getenv("FACEBOOK_OAUTH_CLIENT_ID"),
+			ClientSecret: os.Getenv("FACEBOOK_OAUTH_CLIENT_SECRET"),
+			RedirectURL:  "", // Dinámico
+			AuthURL:      "https://www.facebook.com/v12.0/dialog/oauth",
+			TokenURL:     "https://graph.facebook.com/v12.0/oauth/access_token",
+			UserInfoURL:  "https://graph.facebook.com/me?fields=id,name,email,picture",
+		},
+		"github": {
+			ClientID:     os.Getenv("GITHUB_OAUTH_CLIENT_ID"),
+			ClientSecret: os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"),
+			RedirectURL:  "", // Dinámico
+			AuthURL:      "https://github.com/login/oauth/authorize",
+			TokenURL:     "https://github.com/login/oauth/access_token",
+			UserInfoURL:  "https://api.github.com/user",
+		},
+	}
 }
-
+s := getOAuthConfigs()
+	config := c
 // Helper function to get OAuth config with dynamic redirect URL
 func getOAuthConfig(provider string, c *gin.Context) OAuthConfig {
 	config := oauthConfigs[provider]
