@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "expo-auth-session": "^7.0.10",
+    "expo-random": "^14.0.1"
+  }
+}

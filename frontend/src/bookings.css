@@ -1,0 +1,18 @@
+.booking-container{padding:16px}
+.booking-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.btn-back{background:transparent;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px}
+.booking-controls{display:flex;gap:10px;align-items:center;margin:12px 0}
+.btn-primary{background:#3498db;color:#fff;border:none;border-radius:8px;padding:8px 12px}
+.btn-secondary{background:#e5e7eb;color:#0f172a;border:none;border-radius:8px;padding:8px 12px}
+.alert{padding:10px;border-radius:8px;margin:8px 0}
+.alert.error{background:#fee2e2;color:#7f1d1d}
+.alert.success{background:#dcfce7;color:#14532d}
+.slot-section{margin:12px 0}
+.loading,.empty{color:#475569}
+.slot-grid{display:flex;flex-wrap:wrap;gap:8px}
+.slot{background:#e8f4fd;border:1px solid #3498db;color:#0f172a;padding:6px 10px;border-radius:8px;cursor:pointer}
+.slot.selected{background:#3498db;color:#fff}
+.booking-form{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-top:12px}
+.form-group{display:flex;flex-direction:column;margin-bottom:10px}
+.form-group input,.form-group textarea{border:1px solid #e5e7eb;border-radius:8px;padding:8px}
+.booking-actions{display:flex;gap:8px;margin-top:12px}

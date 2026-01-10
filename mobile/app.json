@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "BienestarApp",
+    "slug": "bienestarapp-mobile",
+    "version": "0.1.0",
+    "sdkVersion": "54.0.0",
+    "scheme": "com.bienestarappmobile",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "orientation": "portrait",
+    "icon": "./assets/Logo_p_bienestar.png",
+    "android": {
+      "package": "com.bienestarappmobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/Logo_p_bienestar.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ],
+      "useNextNotificationsApi": true
+    },
+    "notification": {
+      "icon": "./assets/Logo_p_bienestar.png",
+      "color": "#9b59b6",
+      "androidMode": "default",
+      "androidCollapsedTitle": "BienestarApp"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/Logo_p_bienestar.png",
+          "color": "#9b59b6",
+          "sounds": []
+        }
+      ]
+    ]
+  }
+}

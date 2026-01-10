@@ -1,0 +1,1222 @@
+package main
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gin-contrib/cors"
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/ledongthuc/pdf"
+	"golang.org/x/crypto/bcrypt"
+	_ "github.com/glebarez/sqlite"
+)
+
+var db *sql.DB
+var jwtKey []byte
+
+func getJWTKey() []byte {
+	key := os.Getenv("JWT_SECRET")
+	if key == "" {
+		log.Println("[WARNING] JWT_SECRET environment variable not set; using development fallback")
+		key = "desarrollo_clave_temporal_cambiar_en_produccion"
+	}
+	return []byte(key)
+}
+
+type User struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Password string `json:"-"`
+	Role     string `json:"role"` // user or admin
+}
+
+type Claims struct {
+	UserID int    `json:"user_id"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+type HistoryEntry struct {
+	ID              int     `json:"id"`
+	UserID          int     `json:"user_id"`
+	Date            string  `json:"date"`
+	Weight          float64 `json:"weight"`
+	FatPercentage   float64 `json:"fat_percentage"`
+	MusclePercentage float64 `json:"muscle_percentage"`
+}
+
+type MealPlan struct {
+	ID        int    `json:"id"`
+	UserID    int    `json:"user_id"`
+	Name      string `json:"name"`
+	StartDate string `json:"start_date"`
+	CreatedAt string `json:"created_at"`
+}
+
+type PlanMeal struct {
+	ID          int    `json:"id"`
+	PlanID      int    `json:"plan_id"`
+	DayOfWeek   string `json:"day_of_week"`
+	MealType    string `json:"meal_type"`
+	Name        string `json:"name"`
+	Ingredients string `json:"ingredients"`
+	Preparation string `json:"preparation"`
+}
+
+type FoodLog struct {
+	ID        int    `json:"id"`
+	UserID    int    `json:"user_id"`
+	Date      string `json:"date"`
+	MealType  string `json:"meal_type"`
+	Completed bool   `json:"completed"`
+	Notes     string `json:"notes"`
+}
+
+type OCRResult struct {
+	Name             string  `json:"name"`
+	Height           float64 `json:"height"`
+	Age              int     `json:"age"`
+	Sex              string  `json:"sex"`
+	Weight           float64 `json:"weight"`
+	FatPercentage    float64 `json:"fat_percentage"`
+	MusclePercentage float64 `json:"muscle_percentage"`
+	Confidence       string  `json:"confidence"`
+}
+
+func main() {
+	jwtKey = getJWTKey()
+	var err error
+	db, err = sql.Open("sqlite", "./data.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := migrate(); err != nil {
+		log.Fatal(err)
+	}
+
+	r := gin.Default()
+	// Set trusted proxies to avoid warning and ensure correct client IP handling
+	_ = r.SetTrustedProxies([]string{"127.0.0.1"})
+
+	// CORS for frontend dev (Vite at 5173) and general OPTIONS preflight handling
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+			// Also allow Vite's next port when 5173 is busy
+			"http://localhost:5174",
+			"http://127.0.0.1:5174",
+		},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
+
+	api := r.Group("/api")
+	{
+		api.POST("/register", registerHandler)
+		api.POST("/login", loginHandler)
+
+		auth := api.Group("")
+		auth.Use(authMiddleware())
+		{
+			auth.GET("/me", meHandler)
+			auth.POST("/history", createHistoryHandler)
+			auth.GET("/history", listHistoryHandler)
+			auth.POST("/ocr", ocrHandler)
+
+			auth.POST("/meal-plan/upload", uploadMealPlanHandler)
+			auth.GET("/meal-plan", getMealPlanHandler)
+			auth.POST("/food-log", createFoodLogHandler)
+			auth.GET("/food-log", getFoodLogHandler)
+
+			admin := auth.Group("/admin")
+			admin.Use(adminMiddleware())
+			{
+				admin.GET("/users", listUsersHandler)
+				admin.GET("/users/:id/history", userHistoryHandler)
+				admin.PUT("/users/:id/role", updateUserRoleHandler)
+				admin.DELETE("/users/:id", deleteUserHandler)
+				admin.GET("/export", exportDataHandler)
+			}
+		}
+	}
+
+	log.Println("Server running on :8080")
+	r.Run(":8080")
+}
+
+func migrate() error {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
+		`CREATE TABLE IF NOT EXISTS histories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, weight REAL, fat_percentage REAL, muscle_percentage REAL, FOREIGN KEY(user_id) REFERENCES users(id));`,
+		`CREATE TABLE IF NOT EXISTS meal_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, start_date TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
+		`CREATE TABLE IF NOT EXISTS plan_meals (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
+		`CREATE TABLE IF NOT EXISTS food_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, meal_type TEXT, completed BOOLEAN, notes TEXT, UNIQUE(user_id, date, meal_type), FOREIGN KEY(user_id) REFERENCES users(id));`,
+	}
+	for _, q := range queries {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- Handlers ---
+
+func registerHandler(c *gin.Context) {
+	var req struct {
+		Name     string `json:"name" binding:"required"`
+		Email    string `json:"email" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
+		return
+	}
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	res, err := db.Exec(`INSERT INTO users (name,email,password,role) VALUES (?,?,?,?)`, req.Name, req.Email, string(hash), "user")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no se pudo crear el usuario (email puede estar en uso)"})
+		return
+	}
+	id, _ := res.LastInsertId()
+	c.JSON(http.StatusOK, gin.H{"id": id, "email": req.Email})
+}
+
+func loginHandler(c *gin.Context) {
+	var req struct {
+		Email    string `json:"email" binding:"required"`
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
+		return
+	}
+	var u User
+	row := db.QueryRow(`SELECT id,name,email,password,role FROM users WHERE email = ?`, req.Email)
+	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(req.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
+		return
+	}
+
+	expirationTime := time.Now().Add(24 * time.Hour)
+	claims := &Claims{
+		UserID: u.ID,
+		Email:  u.Email,
+		Role:   u.Role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	s, err := token.SignedString(jwtKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo generar token"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"token": s})
+}
+
+func meHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+	c.JSON(http.StatusOK, gin.H{"user_id": claims.UserID, "email": claims.Email, "role": claims.Role})
+}
+
+func createHistoryHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+	var req struct {
+		Date             string  `json:"date" binding:"required"`
+		Weight           float64 `json:"weight"`
+		FatPercentage    float64 `json:"fat_percentage"`
+		MusclePercentage float64 `json:"muscle_percentage"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
+		return
+	}
+	_, err := db.Exec(`INSERT INTO histories (user_id,date,weight,fat_percentage,muscle_percentage) VALUES (?,?,?,?,?)`,
+		claims.UserID, req.Date, req.Weight, req.FatPercentage, req.MusclePercentage)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo guardar historial"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func listHistoryHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+	rows, err := db.Query(`SELECT id,user_id,date,weight,fat_percentage,muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error al leer historiales"})
+		return
+	}
+	defer rows.Close()
+	var out []HistoryEntry
+	for rows.Next() {
+		var entry HistoryEntry
+		rows.Scan(&entry.ID, &entry.UserID, &entry.Date, &entry.Weight, &entry.FatPercentage, &entry.MusclePercentage)
+		out = append(out, entry)
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// --- Middleware ---
+
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth := c.GetHeader("Authorization")
+		if auth == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "se requiere Authorization header"})
+			return
+		}
+		// Bearer token
+		var tokenString string
+		_, err := fmt.Sscanf(auth, "Bearer %s", &tokenString)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "formato de token inválido"})
+			return
+		}
+		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token inválido"})
+			return
+		}
+		claims, ok := token.Claims.(*Claims)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "claims inválidos"})
+			return
+		}
+		c.Set("claims", claims)
+		c.Next()
+	}
+}
+
+// --- OCR Handler ---
+
+func ocrHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+
+	// Create uploads directory if it doesn't exist
+	os.MkdirAll("./uploads", 0755)
+
+	// Parse form with file
+	file, err := c.FormFile("image")
+	if err != nil {
+		log.Println("[OCR] No image file provided:", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no image file provided"})
+		return
+	}
+
+	// Save uploaded file temporarily
+	filename := filepath.Join("./uploads", fmt.Sprintf("ocr_%d_%d.jpg", claims.UserID, time.Now().UnixNano()))
+	log.Println("[OCR] Saving uploaded file to", filename)
+	if err := c.SaveUploadedFile(file, filename); err != nil {
+		log.Println("[OCR] Failed to save image:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save image"})
+		return
+	}
+	log.Println("[OCR] Saved file successfully")
+	defer func() {
+		if err := os.Remove(filename); err != nil {
+			log.Println("[OCR] Failed to remove temp file:", err)
+		} else {
+			log.Println("[OCR] Temp file removed")
+		}
+	}() // Clean up temp file
+
+	// Extract data from image using simple regex patterns
+	log.Println("[OCR] Running Tesseract on", filename)
+	result := extractDataFromImage(filename)
+	log.Printf("[OCR] Result: name=%s, height=%.1fcm, age=%d, sex=%s, weight=%.2f fat=%.2f muscle=%.2f confidence=%s", result.Name, result.Height, result.Age, result.Sex, result.Weight, result.FatPercentage, result.MusclePercentage, result.Confidence)
+
+	// Return extracted data
+	c.JSON(http.StatusOK, result)
+}
+
+// extractDataFromImage attempts to parse medical report data from image using Tesseract OCR
+func extractDataFromImage(imagePath string) OCRResult {
+	result := OCRResult{
+		Confidence: "low",
+	}
+
+	// Check file exists and is readable
+	fileInfo, err := os.Stat(imagePath)
+	if err != nil || fileInfo.Size() == 0 {
+		result.Confidence = "error"
+		return result
+	}
+
+	// Validate image format
+	file, err := os.Open(imagePath)
+	if err == nil {
+		defer file.Close()
+		header := make([]byte, 4)
+		file.Read(header)
+
+		isValidImage := (len(header) >= 2 &&
+			(header[0] == 0xFF && header[1] == 0xD8) || // JPEG
+			(header[0] == 0x89 && header[1] == 0x50)) // PNG
+
+		if !isValidImage {
+			result.Confidence = "invalid_format"
+			return result
+		}
+	}
+
+	// Run Tesseract OCR
+	text, err := runTesseract(imagePath)
+	if err != nil {
+		log.Printf("Tesseract error: %v", err)
+		result.Confidence = "tesseract_not_installed"
+		return result
+	}
+
+	// Log a snippet of the OCR text for debugging
+	snippet := text
+	if len(snippet) > 800 {
+		snippet = snippet[:800] + "..."
+	}
+	log.Println("[OCR] Raw text snippet:\n" + snippet)
+
+	// Parse extracted text for body composition data
+	result = parseBodyCompositionData(text)
+	return result
+}
+
+// runTesseract executes Tesseract OCR on the image
+func runTesseract(imagePath string) (string, error) {
+	// Try to find tesseract executable
+	tesseractCmd := "tesseract"
+	
+	// Check common Windows installation paths
+	possiblePaths := []string{
+		"tesseract",
+		"C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+		"C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe",
+	}
+	
+	for _, path := range possiblePaths {
+		if _, err := exec.LookPath(path); err == nil {
+			tesseractCmd = path
+			break
+		}
+	}
+
+	// Run: tesseract image.jpg stdout with language and spacing preserved
+	cmd := exec.Command(tesseractCmd, imagePath, "stdout", "-l", "eng+spa", "--psm", "6", "-c", "preserve_interword_spaces=1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("tesseract execution failed: %w (output: %s)", err, string(output))
+	}
+
+	return string(output), nil
+}
+
+// parseBodyCompositionData extracts weight, fat%, muscle% from OCR text
+func parseBodyCompositionData(text string) OCRResult {
+	res := OCRResult{Confidence: "no_data_found"}
+	normalize := func(s string) string { return strings.ReplaceAll(s, ",", ".") }
+	parse := func(s string) (float64, error) { return strconv.ParseFloat(normalize(s), 64) }
+
+	// Extract name from Id./Nombre or Nombre line
+	lines := strings.Split(text, "\n")
+	namePattern := regexp.MustCompile(`(?i)(id\.|nombre|name)\s*[:]*\s*([A-ZÁÉÍÓÚÑ\s]+(?:/\s*)?[A-ZÁÉÍÓÚÑ\s]+)`)
+	for _, ln := range lines {
+		if m := namePattern.FindStringSubmatch(ln); len(m) >= 3 {
+			name := strings.TrimSpace(m[2])
+			if len(name) > 5 { // reasonable name length
+				res.Name = name
+				break
+			}
+		}
+	}
+
+	// Extract height (Estatura: 167.0 cm)
+	heightPattern := regexp.MustCompile(`(?i)estatura[:\s]+([0-9]+(?:[.,][0-9]+)?)\s*cm`)
+	for _, ln := range lines {
+		if m := heightPattern.FindStringSubmatch(ln); len(m) >= 2 {
+			if v, err := parse(m[1]); err == nil && v >= 100 && v <= 250 {
+				res.Height = v
+				break
+			}
+		}
+	}
+
+	// Extract age (Edad: 41 años)
+	agePattern := regexp.MustCompile(`(?i)edad[:\s]+([0-9]+)`)
+	for _, ln := range lines {
+		if m := agePattern.FindStringSubmatch(ln); len(m) >= 2 {
+			if age, err := strconv.Atoi(m[1]); err == nil && age >= 1 && age <= 120 {
+				res.Age = age
+				break
+			}
+		}
+	}
+
+	// Extract sex (Sexo: Hombre/Mujer)
+	sexPattern := regexp.MustCompile(`(?i)sexo[:\s!]+\s*(hombre|mujer|male|female|man|woman)`)
+	for _, ln := range lines {
+		if m := sexPattern.FindStringSubmatch(ln); len(m) >= 2 {
+			sex := strings.ToLower(m[1])
+			if sex == "hombre" || sex == "male" || sex == "man" {
+				res.Sex = "Male"
+			} else if sex == "mujer" || sex == "female" || sex == "woman" {
+				res.Sex = "Female"
+			}
+			break
+		}
+	}
+
+	pesoPatterns := []string{
+		`(?i)\b(peso|weight)\b.*?([0-9]+(?:[.,][0-9]+)?)\s*kg`,
+		`(?i)\b(peso\s*actual|actual\s*peso)\b.*?([0-9]+(?:[.,][0-9]+)?)\s*kg`,
+		`(?i)\bweight\b.*?([0-9]+(?:[.,][0-9]+)?)\s*kg`,
+	}
+	grasaPatterns := []string{
+		`(?i)(porcentaje\s+de\s+grasa|grasa\s+corporal|grasa|fat\s+percentage|body\s+fat|fat)[:=\s]+([0-9]+(?:[.,][0-9]+)?)\s*%`,
+		`(?i)masa\s+grasa\s*\(\s*%\s*\)\s*[:=\s]*([0-9]+(?:[.,][0-9]+)?)`,
+	}
+	musculoPatterns := []string{
+		`(?i)(porcentaje\s+de\s+m[úu]sculo|m[úu]sculo\s+corporal|m[úu]sculo|muscle\s+percentage|muscle)[:=\s]+([0-9]+(?:[.,][0-9]+)?)\s*%`,
+		`(?i)masa\s+muscular\s*\(\s*%\s*\)\s*[:=\s]*([0-9]+(?:[.,][0-9]+)?)`,
+	}
+
+	var weight, fat, muscle float64
+	var gotW, gotF, gotM bool
+
+	for _, p := range pesoPatterns {
+		re := regexp.MustCompile(p)
+		if m := re.FindStringSubmatch(text); len(m) >= 3 {
+			full := strings.ToLower(m[0])
+			// Exclude lines that mention goal/objetivo (goal weight)
+			if strings.Contains(full, "objetivo") || strings.Contains(full, "goal") {
+				continue
+			}
+			if v, err := parse(m[2]); err == nil && v >= 20 && v <= 300 {
+				weight, gotW = v, true
+				break
+			}
+		}
+	}
+	for _, p := range grasaPatterns {
+		re := regexp.MustCompile(p)
+		if m := re.FindStringSubmatch(text); len(m) >= 2 {
+			vStr := m[len(m)-1]
+			if v, err := parse(vStr); err == nil && v >= 3 && v <= 75 {
+				fat, gotF = v, true
+				break
+			}
+		}
+	}
+	for _, p := range musculoPatterns {
+		re := regexp.MustCompile(p)
+		if m := re.FindStringSubmatch(text); len(m) >= 2 {
+			vStr := m[len(m)-1]
+			if v, err := parse(vStr); err == nil && v >= 10 && v <= 80 {
+				muscle, gotM = v, true
+				break
+			}
+		}
+	}
+
+	// Fallback heuristics using line scanning when strict patterns miss
+	if !gotW {
+		numKg := regexp.MustCompile(`(?i)([0-9]+(?:[.,][0-9]+)?)\s*kg`)
+		type kgCand struct {
+			val float64
+			line string
+			labeled bool
+		}
+		var cands []kgCand
+		for _, ln := range lines {
+			low := strings.ToLower(ln)
+			if strings.Contains(low, "objetivo") || strings.Contains(low, "goal") {
+				continue
+			}
+			if strings.Contains(low, "masa") || strings.Contains(low, "muscular") || strings.Contains(low, "celular") {
+				continue
+			}
+			m := numKg.FindStringSubmatch(ln)
+			if len(m) == 2 {
+				if v, err := parse(m[1]); err == nil && v >= 20 && v <= 150 {
+					cands = append(cands, kgCand{val: v, line: strings.TrimSpace(ln), labeled: strings.Contains(low, "peso") || strings.Contains(low, "weight")})
+				}
+			}
+		}
+		if len(cands) > 0 {
+			log.Println("[OCR] KG candidates:")
+			for _, c := range cands {
+				log.Printf("[OCR]   %.2f kg | labeled=%v | line=%s", c.val, c.labeled, c.line)
+			}
+			pick := func(labeledOnly bool) (float64, bool) {
+				var best float64
+				found := false
+				for _, c := range cands {
+					if labeledOnly && !c.labeled {
+						continue
+					}
+					if !found || c.val > best {
+						best, found = c.val, true
+					}
+				}
+				return best, found
+			}
+			if w, ok := pick(true); ok {
+				weight, gotW = w, true
+			} else if w, ok := pick(false); ok {
+				weight, gotW = w, true
+			}
+		}
+	}
+	if !gotF {
+		numPct := regexp.MustCompile(`([0-9]+(?:[.,][0-9]+)?)\s*%`)
+		for _, ln := range lines {
+			low := strings.ToLower(ln)
+			if (strings.Contains(low, "grasa") || strings.Contains(low, "body fat") || strings.Contains(low, "fat")) && strings.Contains(low, "%") {
+				if m := numPct.FindStringSubmatch(ln); len(m) == 2 {
+					if v, err := parse(m[1]); err == nil && v >= 3 && v <= 75 {
+						fat, gotF = v, true
+						break
+					}
+				}
+			}
+		}
+	}
+	if !gotM {
+		numPct := regexp.MustCompile(`([0-9]+(?:[.,][0-9]+)?)\s*%`)
+		for _, ln := range lines {
+			low := strings.ToLower(ln)
+			if (strings.Contains(low, "músculo") || strings.Contains(low, "musculo") || strings.Contains(low, "muscle")) && strings.Contains(low, "%") {
+				if m := numPct.FindStringSubmatch(ln); len(m) == 2 {
+					if v, err := parse(m[1]); err == nil && v >= 10 && v <= 80 {
+						muscle, gotM = v, true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	matches := 0
+	if gotW { matches++ }
+	if gotF { matches++ }
+	if gotM { matches++ }
+
+	switch matches {
+	case 3:
+		res.Confidence = "high"
+	case 2:
+		res.Confidence = "medium"
+	case 1:
+		res.Confidence = "low"
+	default:
+		res.Confidence = "no_data_found"
+	}
+
+	if gotW { res.Weight = weight }
+	if gotF { res.FatPercentage = fat }
+	if gotM { res.MusclePercentage = muscle }
+
+	log.Printf("OCR extracted: name=%s, height=%.1fcm, age=%d, sex=%s, weight=%.1f, fat=%.1f%%, muscle=%.1f%%, confidence=%s",
+		res.Name, res.Height, res.Age, res.Sex, res.Weight, res.FatPercentage, res.MusclePercentage, res.Confidence)
+
+	return res
+}
+
+// --- Admin Middleware & Handlers ---
+
+func adminMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		claims := c.MustGet("claims").(*Claims)
+		if claims.Role != "admin" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "admin access required"})
+			return
+		}
+		c.Next()
+	}
+}
+
+func listUsersHandler(c *gin.Context) {
+	rows, err := db.Query(`SELECT id, name, email, role FROM users`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch users"})
+		return
+	}
+	defer rows.Close()
+
+	var users []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var name, email, role string
+		if err := rows.Scan(&id, &name, &email, &role); err != nil {
+			continue
+		}
+		users = append(users, map[string]interface{}{
+			"id":    id,
+			"name":  name,
+			"email": email,
+			"role":  role,
+		})
+	}
+
+	if users == nil {
+		users = []map[string]interface{}{}
+	}
+	c.JSON(http.StatusOK, users)
+}
+
+func userHistoryHandler(c *gin.Context) {
+	userID := c.Param("id")
+	rows, err := db.Query(`SELECT id, user_id, date, weight, fat_percentage, muscle_percentage FROM histories WHERE user_id = ? ORDER BY date DESC`, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch history"})
+		return
+	}
+	defer rows.Close()
+
+	var history []HistoryEntry
+	for rows.Next() {
+		var entry HistoryEntry
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Date, &entry.Weight, &entry.FatPercentage, &entry.MusclePercentage); err != nil {
+			continue
+		}
+		history = append(history, entry)
+	}
+
+	if history == nil {
+		history = []HistoryEntry{}
+	}
+	c.JSON(http.StatusOK, history)
+}
+
+type ExportRecord struct {
+	UserID            int     `json:"user_id"`
+	UserName          string  `json:"user_name"`
+	Email             string  `json:"email"`
+	Role              string  `json:"role"`
+	RecordID          int     `json:"record_id"`
+	Date              string  `json:"date"`
+	Weight            float64 `json:"weight"`
+	FatPercentage     float64 `json:"fat_percentage"`
+	MusclePercentage  float64 `json:"muscle_percentage"`
+}
+
+func exportDataHandler(c *gin.Context) {
+	query := `
+		SELECT u.id, u.name, u.email, u.role, h.id, h.date, h.weight, h.fat_percentage, h.muscle_percentage
+		FROM users u
+		LEFT JOIN histories h ON u.id = h.user_id
+		ORDER BY u.id, h.date DESC
+	`
+	rows, err := db.Query(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "export failed"})
+		return
+	}
+	defer rows.Close()
+
+	var records []ExportRecord
+	for rows.Next() {
+		var record ExportRecord
+		var recordID *int
+		var date *string
+		var weight *float64
+		var fatPct *float64
+		var musclePct *float64
+
+		if err := rows.Scan(&record.UserID, &record.UserName, &record.Email, &record.Role, &recordID, &date, &weight, &fatPct, &musclePct); err != nil {
+			continue
+		}
+
+		record.RecordID = 0
+		record.Date = ""
+		record.Weight = 0
+		record.FatPercentage = 0
+		record.MusclePercentage = 0
+
+		if recordID != nil {
+			record.RecordID = *recordID
+		}
+		if date != nil {
+			record.Date = *date
+		}
+		if weight != nil {
+			record.Weight = *weight
+		}
+		if fatPct != nil {
+			record.FatPercentage = *fatPct
+		}
+		if musclePct != nil {
+			record.MusclePercentage = *musclePct
+		}
+
+		records = append(records, record)
+	}
+
+	if records == nil {
+		records = []ExportRecord{}
+	}
+	c.JSON(http.StatusOK, records)
+}
+
+func updateUserRoleHandler(c *gin.Context) {
+	userID := c.Param("id")
+	claims := c.MustGet("claims").(*Claims)
+
+	var req struct {
+		Role string `json:"role" binding:"required"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	// Validate role
+	if req.Role != "user" && req.Role != "admin" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role"})
+		return
+	}
+
+	// Prevent self-demotion from admin
+	if fmt.Sprintf("%d", claims.UserID) == userID && req.Role != "admin" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot demote yourself"})
+		return
+	}
+
+	result, err := db.Exec(`UPDATE users SET role = ? WHERE id = ?`, req.Role, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update role"})
+		return
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil || rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "role updated"})
+}
+
+func deleteUserHandler(c *gin.Context) {
+	userID := c.Param("id")
+	claims := c.MustGet("claims").(*Claims)
+
+	// Prevent self-deletion
+	if fmt.Sprintf("%d", claims.UserID) == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot delete your own account"})
+		return
+	}
+
+	// Start transaction-like behavior: delete related records first
+	_, err := db.Exec(`DELETE FROM histories WHERE user_id = ?`, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user history"})
+		return
+	}
+
+	result, err := db.Exec(`DELETE FROM users WHERE id = ?`, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete user"})
+		return
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil || rows == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "user deleted"})
+}
+
+// --- Meal Plan Handlers ---
+
+func uploadMealPlanHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+
+	file, err := c.FormFile("pdf")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no PDF file provided"})
+		return
+	}
+
+	tempPath := filepath.Join("./uploads", fmt.Sprintf("meal_plan_%d_%d.pdf", claims.UserID, time.Now().UnixNano()))
+	log.Printf("[MealPlan] Saving PDF to: %s", tempPath)
+	if err := c.SaveUploadedFile(file, tempPath); err != nil {
+		log.Printf("[MealPlan] Failed to save PDF: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save PDF"})
+		return
+	}
+	defer os.Remove(tempPath)
+
+	log.Printf("[MealPlan] Extracting meals from PDF...")
+	meals, err := extractMealsFromPDF(tempPath)
+	if err != nil {
+		log.Printf("[MealPlan] PDF extraction error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse PDF"})
+		return
+	}
+	log.Printf("[MealPlan] Extracted %d meals from PDF", len(meals))
+
+	planName := fmt.Sprintf("Plan %s", time.Now().Format("2006-01-02"))
+	result, err := db.Exec(`INSERT INTO meal_plans (user_id, name, start_date, created_at) VALUES (?, ?, ?, ?)`,
+		claims.UserID, planName, time.Now().Format("2006-01-02"), time.Now().Format(time.RFC3339))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create meal plan"})
+		return
+	}
+
+	planID, _ := result.LastInsertId()
+
+	for _, meal := range meals {
+		_, err = db.Exec(`INSERT INTO plan_meals (plan_id, day_of_week, meal_type, name, ingredients, preparation) VALUES (?, ?, ?, ?, ?, ?)`,
+			planID, meal.DayOfWeek, meal.MealType, meal.Name, meal.Ingredients, meal.Preparation)
+		if err != nil {
+			log.Printf("[MealPlan] Failed to insert meal: %v", err)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"plan_id": planID, "meals_count": len(meals)})
+}
+
+func getMealPlanHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+
+	var plan MealPlan
+	err := db.QueryRow(`SELECT id, user_id, name, start_date, created_at FROM meal_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, claims.UserID).
+		Scan(&plan.ID, &plan.UserID, &plan.Name, &plan.StartDate, &plan.CreatedAt)
+	if err != nil {
+		// If the user has no plan yet, return empty data instead of 404 to keep the UI clean
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusOK, gin.H{"plan": nil, "meals": []PlanMeal{}})
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "no meal plan found"})
+		return
+	}
+
+	rows, err := db.Query(`SELECT id, plan_id, day_of_week, meal_type, name, ingredients, preparation FROM plan_meals WHERE plan_id = ? ORDER BY 
+		CASE day_of_week 
+			WHEN 'Lunes' THEN 1 WHEN 'Martes' THEN 2 WHEN 'Miércoles' THEN 3 WHEN 'Jueves' THEN 4 
+			WHEN 'Viernes' THEN 5 WHEN 'Sábado' THEN 6 WHEN 'Domingo' THEN 7 
+		END,
+		CASE meal_type 
+			WHEN 'Desayuno' THEN 1 WHEN 'Colación' THEN 2 WHEN 'Comida' THEN 3 WHEN 'Cena' THEN 4 
+		END`, plan.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch meals"})
+		return
+	}
+	defer rows.Close()
+
+	var meals []PlanMeal
+	for rows.Next() {
+		var meal PlanMeal
+		rows.Scan(&meal.ID, &meal.PlanID, &meal.DayOfWeek, &meal.MealType, &meal.Name, &meal.Ingredients, &meal.Preparation)
+		meals = append(meals, meal)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"plan": plan, "meals": meals})
+}
+
+func createFoodLogHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+	var req struct {
+		Date      string `json:"date" binding:"required"`
+		MealType  string `json:"meal_type" binding:"required"`
+		Completed bool   `json:"completed"`
+		Notes     string `json:"notes"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid data"})
+		return
+	}
+
+	_, err := db.Exec(`INSERT OR REPLACE INTO food_logs (user_id, date, meal_type, completed, notes) VALUES (?, ?, ?, ?, ?)`,
+		claims.UserID, req.Date, req.MealType, req.Completed, req.Notes)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save log"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func getFoodLogHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+	date := c.Query("date")
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+
+	rows, err := db.Query(`SELECT id, user_id, date, meal_type, completed, notes FROM food_logs WHERE user_id = ? AND date = ?`, claims.UserID, date)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch logs"})
+		return
+	}
+	defer rows.Close()
+
+	var logs []FoodLog
+	for rows.Next() {
+		var log FoodLog
+		rows.Scan(&log.ID, &log.UserID, &log.Date, &log.MealType, &log.Completed, &log.Notes)
+		logs = append(logs, log)
+	}
+
+	if logs == nil {
+		logs = []FoodLog{}
+	}
+	c.JSON(http.StatusOK, logs)
+}
+
+func extractMealsFromPDF(pdfPath string) ([]PlanMeal, error) {
+	file, reader, err := pdf.Open(pdfPath)
+	if err != nil {
+		log.Printf("[MealPlan] Failed to open PDF: %v", err)
+		return nil, err
+	}
+	defer file.Close()
+
+	var fullText string
+	for i := 1; i <= reader.NumPage(); i++ {
+		page := reader.Page(i)
+		if page.V.IsNull() {
+			continue
+		}
+		text, _ := page.GetPlainText(nil)
+		fullText += text + "\n"
+	}
+
+	log.Printf("[MealPlan] Extracted text length: %d characters", len(fullText))
+	if len(fullText) > 500 {
+		log.Printf("[MealPlan] First 500 chars: %s", fullText[:500])
+	} else {
+		log.Printf("[MealPlan] Full text: %s", fullText)
+	}
+
+	// Normalize fragmented text: remove excessive line breaks and join words
+	fullText = normalizeFragmentedText(fullText)
+	log.Printf("[MealPlan] After normalization: %d characters", len(fullText))
+	if len(fullText) > 1000 {
+		log.Printf("[MealPlan] First 1000 normalized chars: %s", fullText[:1000])
+	} else {
+		log.Printf("[MealPlan] Normalized text: %s", fullText)
+	}
+
+	meals := parseMealPlanText(fullText)
+	log.Printf("[MealPlan] Parsed meals: %d", len(meals))
+	return meals, nil
+}
+
+// normalizeFragmentedText fixes PDFs where words are split across multiple lines
+func normalizeFragmentedText(text string) string {
+	// First pass: join ALL text with spaces (removing all newlines)
+	text = strings.ReplaceAll(text, "\n", " ")
+	
+	// Clean up multiple spaces
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+	text = strings.TrimSpace(text)
+	
+	// Second pass: try to reconstruct words by looking for patterns
+	// Pattern: single letters separated by spaces that form known words
+	// For Spanish days: L u n e s -> Lunes, M a r t e s -> Martes, etc.
+	wordPatterns := map[string]string{
+		"L u n e s":       "Lunes",
+		"M a r t e s":     "Martes",
+		"M i é r c o l e s": "Miércoles",
+		"M i e r c o l e s": "Miércoles",
+		"J u e v e s":     "Jueves",
+		"V i e r n e s":   "Viernes",
+		"S á b a d o":     "Sábado",
+		"S a b a d o":     "Sábado",
+		"D o m i n g o":   "Domingo",
+		"D e s a y u n o": "Desayuno",
+		"C o m i d a":     "Comida",
+		"C e n a":         "Cena",
+		"C o l a c i ó n": "Colación",
+		"C o l a c i o n": "Colación",
+		"I n g r e d i e n t e s": "Ingredientes",
+		"P r e p a r a c i ó n": "Preparación",
+		"P r e p a r a c i o n": "Preparación",
+	}
+	
+	for pattern, replacement := range wordPatterns {
+		text = strings.ReplaceAll(text, pattern, replacement)
+	}
+	
+	// Add newlines before key markers to help parsing
+	markers := []string{"Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo",
+		"Desayuno", "Comida", "Cena", "Colación", "Ingredientes:", "Preparación:"}
+	for _, marker := range markers {
+		text = strings.ReplaceAll(text, " "+marker, "\n"+marker)
+	}
+	
+	return strings.TrimSpace(text)
+}
+
+func parseMealPlanText(text string) []PlanMeal {
+var meals []PlanMeal
+days := []string{"Lunes", "Martes", "Miércoles", "Miercoles", "Jueves", "Viernes", "Sábado", "Sabado", "Domingo"}
+mealTypesOrder := []string{"Desayuno", "Comida", "Cena"}
+
+lines := strings.Split(text, "\n")
+var currentDay string
+var currentMealIndex int
+var mealName strings.Builder
+var ingredients strings.Builder
+var preparation strings.Builder
+inIngredients := false
+inPreparation := false
+
+log.Printf("[MealPlan Parser] Processing %d lines", len(lines))
+
+saveMeal := func() {
+if currentDay != "" && mealName.Len() > 0 && currentMealIndex < len(mealTypesOrder) {
+meal := PlanMeal{
+DayOfWeek:   currentDay,
+MealType:    mealTypesOrder[currentMealIndex],
+Name:        strings.TrimSpace(mealName.String()),
+Ingredients: strings.TrimSpace(ingredients.String()),
+Preparation: strings.TrimSpace(preparation.String()),
+}
+meals = append(meals, meal)
+log.Printf("[MealPlan Parser] Saved meal: %s - %s - %s", meal.DayOfWeek, meal.MealType, meal.Name[:min(len(meal.Name), 30)])
+currentMealIndex++
+mealName.Reset()
+ingredients.Reset()
+preparation.Reset()
+inIngredients = false
+inPreparation = false
+}
+}
+
+for i, line := range lines {
+line = strings.TrimSpace(line)
+if line == "" {
+continue
+}
+
+// Skip header rows
+if line == "Desayuno" || line == "Comida" || line == "Cena" || line == "Plan de al imentació n" {
+continue
+}
+
+// Check for new day
+foundDay := false
+for _, day := range days {
+if strings.HasPrefix(line, day) {
+saveMeal()
+log.Printf("[MealPlan Parser] Line %d: Found day: %s", i, day)
+currentDay = day
+if currentDay == "Miercoles" {
+currentDay = "Miércoles"
+}
+if currentDay == "Sabado" {
+currentDay = "Sábado"
+}
+currentMealIndex = 0
+remaining := strings.TrimPrefix(line, day)
+remaining = strings.TrimSpace(remaining)
+if remaining != "" {
+mealName.Reset()
+mealName.WriteString(remaining)
+log.Printf("[MealPlan Parser] First meal name: %s", remaining[:min(len(remaining), 50)])
+}
+foundDay = true
+break
+}
+}
+if foundDay {
+continue
+}
+
+// Check for Ingredientes
+if strings.HasPrefix(line, "Ingredientes:") {
+if ingredients.Len() > 0 {
+saveMeal()
+}
+inIngredients = true
+inPreparation = false
+remaining := strings.TrimPrefix(line, "Ingredientes:")
+remaining = strings.TrimSpace(remaining)
+if remaining != "" {
+ingredients.WriteString(remaining)
+}
+continue
+}
+
+// Check for Preparación
+if strings.HasPrefix(line, "Preparación:") || strings.HasPrefix(line, "Preparacion:") {
+inPreparation = true
+inIngredients = false
+remaining := strings.TrimPrefix(line, "Preparación:")
+remaining = strings.TrimPrefix(remaining, "Preparacion:")
+remaining = strings.TrimSpace(remaining)
+
+parts := strings.Split(remaining, ". ")
+if len(parts) >= 2 {
+lastPart := parts[len(parts)-1]
+if len(lastPart) > 10 && strings.ToUpper(lastPart) == lastPart {
+prep := strings.Join(parts[:len(parts)-1], ". ") + "."
+if prep != "" {
+preparation.WriteString(prep)
+}
+saveMeal()
+mealName.Reset()
+mealName.WriteString(lastPart)
+inPreparation = false
+continue
+}
+}
+
+if remaining != "" {
+preparation.WriteString(remaining)
+}
+continue
+}
+
+// Accumulate content
+if inIngredients {
+if ingredients.Len() > 0 {
+ingredients.WriteString(" ")
+}
+ingredients.WriteString(line)
+} else if inPreparation {
+if preparation.Len() > 0 {
+preparation.WriteString(" ")
+}
+preparation.WriteString(line)
+}
+}
+
+saveMeal()
+return meals
+}
