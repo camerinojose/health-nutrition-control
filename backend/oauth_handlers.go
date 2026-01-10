@@ -254,16 +254,39 @@ func oauthCallbackHandler(provider string) gin.HandlerFunc {
 		oauthTokens["last_token_expiry"] = fmt.Sprintf("%d", time.Now().Add(5*time.Minute).Unix())
 		tokensMutex.Unlock()
 
-		// Redirigir directamente al cliente (móvil o web) con el token en el query
-		// Si es un deep link del móvil, el navegador se cerrará automáticamente
-		// Si es una URL web normal, el usuario será redirigido a la success page
+		// Construir la URL final con el token
 		finalRedirect := fmt.Sprintf("%s?token=%s", successUrl, url.QueryEscape(token))
 		log.Printf("[OAUTH] ============ FINAL REDIRECT ============")
 		log.Printf("[OAUTH] Success URL: %s", successUrl)
 		log.Printf("[OAUTH] Final redirect URL: %s", finalRedirect)
 		log.Printf("[OAUTH] Token length: %d", len(token))
 		log.Printf("[OAUTH] ============ END CALLBACK ============")
-		c.Redirect(http.StatusTemporaryRedirect, finalRedirect)
+
+		// Para mobile deep links, usar HTML redirect para mejor compatibilidad con Chrome Custom Tabs
+		// Esto permite que el navegador se cierre automáticamente al activar el deep link
+		if len(successUrl) > 0 && (successUrl[0:10] == "bienestarap" || successUrl[0:4] == "exp:") {
+			log.Printf("[OAUTH] Detected mobile deep link, using HTML redirect")
+			htmlRedirect := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Autenticación exitosa</title>
+</head>
+<body>
+    <h2>Autenticación exitosa</h2>
+    <p>Redirigiendo a la aplicación...</p>
+    <script>
+        window.location.replace("%s");
+        // Fallback: cerrar ventana después de 1 segundo
+        setTimeout(function() { window.close(); }, 1000);
+    </script>
+</body>
+</html>`, finalRedirect)
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(htmlRedirect))
+		} else {
+			// Para URLs web normales, usar redirect HTTP estándar
+			c.Redirect(http.StatusTemporaryRedirect, finalRedirect)
+		}
 	}
 }
 
