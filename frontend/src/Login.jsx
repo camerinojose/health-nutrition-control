@@ -110,7 +110,7 @@ export default function Login({onLogin, onSwitchToRegister}){
               const height = 600;
               const left = (window.innerWidth - width) / 2;
               const top = (window.innerHeight - height) / 2;
-              const authBase = 'https://nonillusional-searingly-loren.ngrok-free.dev/api/auth';
+              const authBase = import.meta.env.VITE_BACKEND_URL || '/api';
               const redirect = encodeURIComponent(`${window.location.origin}/callback`);
               window.open(
                 `${authBase}/google?redirect_uri=${redirect}`,
@@ -128,7 +128,7 @@ export default function Login({onLogin, onSwitchToRegister}){
             </button>
             
             <button type="button" className="social-button facebook" onClick={() => {
-              const authBase = 'https://nonillusional-searingly-loren.ngrok-free.dev/api/auth';
+              const authBase = import.meta.env.VITE_BACKEND_URL || '/api';
               window.location.href = `${authBase}/facebook`;
             }}>
               <svg viewBox="0 0 24 24" width="20" height="20" fill="#1877F2">
