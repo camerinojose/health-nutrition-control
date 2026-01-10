@@ -1,13 +1,17 @@
+
 import React, {useState, useEffect} from 'react'
 import api from './api'
 import { saveToken, TOKEN_KEY } from './auth'
+import ForgotPassword from './ForgotPassword'
 import './auth.css'
+
 
 export default function Login({onLogin, onSwitchToRegister}){
   const [email,setEmail] = useState('')
   const [password,setPassword] = useState('')
   const [err,setErr] = useState(null)
   const [showPassword, setShowPassword] = useState(false)
+  const [showForgot, setShowForgot] = useState(false)
 
   // Monitorear token en localStorage (cambios desde popup de Google)
   useEffect(() => {
@@ -32,6 +36,10 @@ export default function Login({onLogin, onSwitchToRegister}){
     }catch(e){
       setErr(e.response?.data?.error || 'Error al iniciar sesión')
     }
+  }
+
+  if (showForgot) {
+    return <ForgotPassword onBack={() => setShowForgot(false)} />;
   }
 
   return (
@@ -99,6 +107,9 @@ export default function Login({onLogin, onSwitchToRegister}){
           </div>
 
           <button type="submit" className="auth-button">Iniciar Sesión</button>
+          <button type="button" className="link-button" style={{marginTop: 8, marginBottom: 8}} onClick={() => setShowForgot(true)}>
+            ¿Olvidaste tu contraseña?
+          </button>
           
           <div className="auth-divider">
             <span>o continúa con</span>

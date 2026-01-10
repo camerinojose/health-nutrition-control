@@ -24,6 +24,35 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// Simple password reset for test users (no email verification)
+func resetPasswordHandler(c *gin.Context) {
+	var req struct {
+		Email       string `json:"email" binding:"required"`
+		NewPassword string `json:"newPassword" binding:"required"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
+		return
+	}
+	var userID int
+	err := db.QueryRow(`SELECT id FROM users WHERE email = ?`, req.Email).Scan(&userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "usuario no encontrado"})
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar la contraseña"})
+		return
+	}
+	_, err = db.Exec(`UPDATE users SET password = ? WHERE id = ?`, string(hash), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar la contraseña"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "contraseña actualizada"})
+}
+
 var db *sql.DB
 var jwtKey []byte
 
@@ -233,6 +262,7 @@ func main() {
 	{
 		api.POST("/register", registerHandler)
 		api.POST("/login", loginHandler)
+		api.POST("/reset-password", resetPasswordHandler)
 
 		// OAuth routes
 		api.GET("/auth/google", oauthInitHandler("google"))
