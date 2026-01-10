@@ -1,10 +1,10 @@
 import axios from 'axios'
 import { getToken } from './auth'
 
-// Use relative URL '/api' to leverage Vite proxy in development
-// In production, can be overridden with VITE_API_BASE_URL env variable
+// Use VITE_BACKEND_URL for Render/production, fallback to relative '/api' for dev
+// VITE_BACKEND_URL should be set in .env.local (e.g., https://health-nutrition-control.onrender.com/api)
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_BACKEND_URL ||
   '/api'
 
 const api = axios.create({
