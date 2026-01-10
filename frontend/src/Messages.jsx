@@ -234,7 +234,7 @@ const Messages = ({ profile }) => {
     <div className="messages-container">
       <div className="messages-layout">
         {/* Conversations List */}
-        <div className="conversations-panel">
+        <div className={`conversations-panel${selectedConversation ? ' hide' : ' flex'}`}> 
           <div className="conversations-header">
             <h3>💬 Conversaciones</h3>
             <button className="new-conversation-btn" onClick={startNewConversation}>
@@ -285,7 +285,7 @@ const Messages = ({ profile }) => {
         </div>
 
         {/* Messages Panel */}
-        <div className="messages-panel">
+        <div className={`messages-panel${selectedConversation ? ' flex' : ' hide'}`}> 
           {selectedConversation ? (
             <>
               <div className="messages-header">

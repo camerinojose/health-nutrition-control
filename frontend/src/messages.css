@@ -466,14 +466,21 @@
     border-radius: 0;
   }
 
+
   .conversations-panel {
     width: 100%;
-    display: ${props => props.selectedConversation ? 'none' : 'flex'};
   }
 
   .messages-panel {
     width: 100%;
-    display: ${props => !props.selectedConversation ? 'none' : 'flex'};
+  }
+
+  .hide {
+    display: none !important;
+  }
+
+  .flex {
+    display: flex !important;
   }
 
   .conversations-header {

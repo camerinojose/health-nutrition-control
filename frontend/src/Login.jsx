@@ -111,7 +111,7 @@ export default function Login({onLogin, onSwitchToRegister}){
               const left = (window.innerWidth - width) / 2;
               const top = (window.innerHeight - height) / 2;
               const authBase = import.meta.env.VITE_BACKEND_URL || '/api';
-              const redirect = encodeURIComponent(`${window.location.origin}/callback`);
+              const redirect = encodeURIComponent(`${window.location.origin}/`);
               window.open(
                 `${authBase}/auth/google?redirect_uri=${redirect}`,
                 'GoogleLogin',
