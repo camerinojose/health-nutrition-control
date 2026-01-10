@@ -32,7 +32,7 @@ import NutritionistRecommendationsScreen from './src/nutritionist/Recommendation
 import NutritionistMealPlansScreen from './src/nutritionist/MealPlansScreen'
 
 // Configura tu URL de backend
-const BACKEND_URL = 'https://nonillusional-searingly-loren.ngrok-free.dev'
+const BACKEND_URL = 'https://health-nutrition-control.onrender.com'
 
 // Función para determinar la temporada actual
 function getCurrentSeason() {
@@ -131,6 +131,25 @@ export default function App() {
       );
       
       console.log('openAuthSessionAsync result:', result.type);
+      
+      // If the browser was dismissed (user closed manually or system closed it)
+      if (result.type === 'dismiss' || result.type === 'cancel') {
+        console.log('Browser was dismissed, checking if auth completed...');
+        
+        // Wait a bit for deep link to process
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Check if we got a token from the deep link
+        const existingToken = await getToken();
+        if (existingToken) {
+          console.log('Token found after browser dismissal - auth succeeded');
+          return;
+        } else {
+          console.log('No token found - user cancelled auth');
+          return;
+        }
+      }
+
       console.log('Navegador cerrado, handleDeepLink debería procesar el token...');
 
       if (authHandledRef.current) {
@@ -236,21 +255,23 @@ export default function App() {
     console.log('Deep link received:', event.url);
     const url = event.url;
     
-    // Cerrar el navegador INMEDIATAMENTE
-    try {
-      await WebBrowser.dismissBrowser();
-      console.log('Browser dismissed');
-    } catch (e) {
-      console.warn('Error dismissing browser:', e);
-    }
-    
-    // Check for token in URL
+    // Check for token in URL FIRST
     const token = extractAccessToken(url);
     console.log('Token extraction result:', token ? 'FOUND' : 'NOT FOUND');
     
     if (token) {
       authHandledRef.current = true;
       console.log('Token extracted from deep link, length:', token.length);
+      
+      // Close the browser immediately after getting the token
+      setTimeout(() => {
+        try {
+          WebBrowser.dismissBrowser();
+        } catch (e) {
+          console.log('Browser already closed');
+        }
+      }, 100);
+      
       await completeLogin(token, '¡Bienvenido con Google!');
     } else {
       console.log('No token found in deep link URL, checking AsyncStorage...');
@@ -270,6 +291,8 @@ export default function App() {
     async function prepare() {
       try {
         console.log('App initializing...');
+        setAppIsReady(true); // Set ready FIRST to show something
+        
         const tk = await getToken();
         if (tk) {
           console.log('Token found, setting...');
@@ -301,17 +324,16 @@ export default function App() {
             fetchProfile(token).catch(e => console.warn('Profile fetch failed:', e));
           }
         }
-      } catch (e) {
-        console.warn('Prepare error:', e);
-      } finally {
-        console.log('Setting app ready...');
-        setAppIsReady(true);
+        
         // Hide splash screen with error handling
         setTimeout(() => {
           SplashScreen.hideAsync().catch(err => {
             console.warn('Hide splash failed:', err);
           });
         }, 100);
+      } catch (e) {
+        console.warn('Prepare error:', e);
+        setAppIsReady(true); // Still show app even if error
       }
     }
 
@@ -577,8 +599,9 @@ export default function App() {
   // Guard: wait for app to be ready before rendering
   if (!appIsReady) {
     return (
-      <SafeAreaView style={{flex: 1, backgroundColor: '#000'}}>
-        <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+      <SafeAreaView style={{flex: 1, backgroundColor: '#4CAF50'}}>
+        <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20}}>
+          <Text style={{color: '#fff', fontSize: 24, fontWeight: 'bold', marginBottom: 10}}>Control de Salud</Text>
           <Text style={{color: '#fff', fontSize: 16}}>Cargando...</Text>
         </View>
       </SafeAreaView>

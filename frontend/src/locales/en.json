@@ -1,6 +1,8 @@
 {
-  "welcome_title": "Welcome to BienestarApp",
-  "welcome_subtitle": "Track body composition, view history and progress.",
+  "welcome_title": "Welcome to your wellness space!",
+  "welcome_subtitle": "Today is a great day to take care of yourself. Take the first step towards a healthier, happier life.",
+  "dailyRecommendation": "Healthy tip of the day",
+  "seasonalTip": "Remember: small changes, big results. Drink water, move your body, and celebrate every step. Your health is your best investment!",
   "home": "Home",
   "login": "Login",
   "register": "Register",

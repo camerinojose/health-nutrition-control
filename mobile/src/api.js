@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { getToken } from './auth'
 
-const BACKEND_URL = 'https://nonillusional-searingly-loren.ngrok-free.dev'
+const BACKEND_URL = 'https://health-nutrition-control.onrender.com'
 const api = axios.create({
   baseURL: `${BACKEND_URL}/api`
 })

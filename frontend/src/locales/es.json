@@ -1,6 +1,8 @@
 {
-  "welcome_title": "Bienvenido a BienestarApp",
-  "welcome_subtitle": "Registra tu composición corporal, revisa historial y progreso.",
+  "welcome_title": "¡Bienvenido a tu espacio de de Control Nutricional!",
+  "welcome_subtitle": "Hoy es un gran día para cuidar de ti. Da el primer paso hacia una vida más saludable y feliz.",
+  "dailyRecommendation": "Consejo saludable del día",
+  "seasonalTip": "Recuerda: pequeños cambios, grandes resultados. Toma agua, muévete y celebra cada avance. ¡Tu salud es tu mejor inversión!",
   "home": "Inicio",
   "login": "Iniciar Sesión",
   "register": "Registrarse",

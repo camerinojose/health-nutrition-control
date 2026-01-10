@@ -24,7 +24,10 @@
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
         <category android:name="android.intent.category.BROWSABLE" />
-        <data android:scheme="com.bienestarappmobile" android:host="redirect" android:pathPrefix="/" />
+        <!-- Accept OAuth deep links: com.bienestarappmobile://oauth-callback -->
+        <data android:scheme="com.bienestarappmobile" android:host="oauth-callback" />
+        <!-- Fallback: accept any host for this scheme -->
+        <data android:scheme="com.bienestarappmobile" />
       </intent-filter>
     </activity>
   </application>

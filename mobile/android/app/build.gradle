@@ -19,6 +19,8 @@ react {
     // works correctly with Expo projects.
     cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
     bundleCommand = "export:embed"
+    // Force bundling also for debug (so APK debug no depende de Metro)
+    debuggableVariants = []
 
     /* Folders */
      //   The root of your project, i.e. where "package.json" lives. Default is '../..'

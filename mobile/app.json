@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "BienestarApp",
+    "name": "Health & Nutrition Control",
     "slug": "bienestarapp-mobile",
     "version": "0.1.0",
     "sdkVersion": "54.0.0",
@@ -28,7 +28,7 @@
       "icon": "./assets/Logo_p_bienestar.png",
       "color": "#9b59b6",
       "androidMode": "default",
-      "androidCollapsedTitle": "BienestarApp"
+      "androidCollapsedTitle": "Health & Nutrition Control"
     },
     "plugins": [
       [
