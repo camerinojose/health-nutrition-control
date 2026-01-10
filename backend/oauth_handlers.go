@@ -38,10 +38,17 @@ type OAuthConfig struct {
 
 // Helper function to get OAuth configs from environment variables
 func getOAuthConfigs() map[string]OAuthConfig {
+	// Read env vars once and log if missing (no secrets printed)
+	googleID := os.Getenv("GOOGLE_OAUTH_CLIENT_ID")
+	googleSecret := os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+	if googleID == "" || googleSecret == "" {
+		log.Println("[OAUTH] WARNING: GOOGLE_OAUTH_CLIENT_ID or GOOGLE_OAUTH_CLIENT_SECRET is not set")
+	}
+
 	return map[string]OAuthConfig{
 		"google": {
-			ClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
-			ClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+			ClientID:     googleID,
+			ClientSecret: googleSecret,
 			RedirectURL:  "", // Dinámico
 			AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 			TokenURL:     "https://oauth2.googleapis.com/token",
