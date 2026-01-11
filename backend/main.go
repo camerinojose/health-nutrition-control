@@ -257,7 +257,8 @@ func main() {
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
-	}))
+    })
+
 
 	api := r.Group("/api")
 	{
