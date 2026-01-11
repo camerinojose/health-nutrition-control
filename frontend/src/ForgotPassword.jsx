@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import api from './api';
 import './auth.css';
 
+
 export default function ForgotPassword({ onBack }) {
   const [email, setEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -16,6 +17,9 @@ export default function ForgotPassword({ onBack }) {
     try {
       await api.post('/reset-password', { email, newPassword });
       setSuccess(true);
+      setTimeout(() => {
+        onBack(email); // Pass email back to login
+      }, 1200);
     } catch (err) {
       setError(err.response?.data?.error || 'Error al restablecer la contraseña');
     } finally {
@@ -29,7 +33,6 @@ export default function ForgotPassword({ onBack }) {
         <div className="auth-form">
           <h2>Contraseña actualizada</h2>
           <p>Puedes iniciar sesión con tu nueva contraseña.</p>
-          <button className="auth-button" onClick={onBack}>Volver al inicio de sesión</button>
         </div>
       </div>
     );

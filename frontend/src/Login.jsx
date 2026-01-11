@@ -38,8 +38,15 @@ export default function Login({onLogin, onSwitchToRegister}){
     }
   }
 
+
+  // Pre-fill email after password reset
+  const handleForgotBack = (resetEmail) => {
+    setShowForgot(false);
+    if (resetEmail) setEmail(resetEmail);
+  };
+
   if (showForgot) {
-    return <ForgotPassword onBack={() => setShowForgot(false)} />;
+    return <ForgotPassword onBack={handleForgotBack} />;
   }
 
   return (
