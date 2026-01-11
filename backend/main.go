@@ -250,14 +250,14 @@ func main() {
 			// Also allow Vite's next port when 5173 is busy
 			"http://localhost:5174",
 			"http://127.0.0.1:5174",
-			"https://health-nutrition-control-web.onrender.com"
+			"https://health-nutrition-control-web.onrender.com",
 		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
-    })
+       })
 
 
 	api := r.Group("/api")
