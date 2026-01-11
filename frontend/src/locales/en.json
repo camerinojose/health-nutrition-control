@@ -1,3 +1,4 @@
+{
   "chooseNutritionist": "Choose Nutritionist",
   "myDiet": "My Diet",
   "progress": "Progress",
@@ -30,7 +31,6 @@
   "english": "English",
   "logout": "Logout",
   "support": "Support"
-{
   "welcome_title": "Welcome to your wellness space!",
   "welcome_subtitle": "Today is a great day to take care of yourself. Take the first step towards a healthier, happier life.",
   "dailyRecommendation": "Healthy tip of the day",
