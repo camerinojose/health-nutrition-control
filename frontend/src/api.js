@@ -177,3 +177,12 @@ export const getPatientMealPlan = async (patientId) => {
   const res = await api.get(`/nutritionist/patients/${patientId}/meal-plan`)
   return res.data
 }
+
+// Messaging
+export const sendMessageToPatient = async (recipientId, message) => {
+  const res = await api.post('/messages', {
+    recipient_id: recipientId,
+    message
+  });
+  return res.data;
+};

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getPatients, getPatientDetails, getPatientHistory, getNutritionistAppointments, 
          updateAppointmentNotes, createRecommendation, getRecommendations,
-         getRecipes, createRecipe, updateRecipe, deleteRecipe, proposeAppointmentChange } from './api';
+         getRecipes, createRecipe, updateRecipe, deleteRecipe, proposeAppointmentChange, sendMessageToPatient } from './api';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -69,6 +69,10 @@ function NutritionistDashboard({ profile }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all'); // all, active, inactive
   const [dashboardStats, setDashboardStats] = useState(null);
+
+  // Message modal state
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [messageText, setMessageText] = useState("");
 
   useEffect(() => {
     if (activeTab === 'patients') {
@@ -512,6 +516,21 @@ Fin del Reporte
     alert('Reporte exportado correctamente');
   };
 
+  // Handler for sending message to patient
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!messageText.trim()) return;
+    try {
+      await sendMessageToPatient(selectedPatient, messageText);
+      alert("Mensaje enviado correctamente");
+      setShowMessageModal(false);
+      setMessageText("");
+    } catch (err) {
+      alert("Error al enviar el mensaje");
+      console.error(err);
+    }
+  };
+
   return (
     <div className="nutritionist-dashboard">
       <div className="nutritionist-header">
@@ -743,6 +762,44 @@ Fin del Reporte
                 <div className="details-section">
                   <h3>Nueva Recomendación</h3>
                   <form onSubmit={handleCreateRecommendation} className="recommendation-form">
+                                    {/* Message Patient Button and Modal */}
+                                    <div className="details-section">
+                                      <h3>Mensajería</h3>
+                                      <button
+                                        className="btn-primary"
+                                        style={{ marginBottom: '1em' }}
+                                        onClick={() => setShowMessageModal(true)}
+                                      >
+                                        ✉️ Enviar Mensaje al Paciente
+                                      </button>
+                                      {showMessageModal && (
+                                        <div className="modal-overlay" onClick={() => setShowMessageModal(false)}>
+                                          <div className="message-modal" onClick={e => e.stopPropagation()} style={{ background: '#fff', padding: 24, borderRadius: 8, maxWidth: 400, margin: '40px auto', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                                            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                              <h3>Enviar Mensaje a {patientDetails.name}</h3>
+                                              <button className="modal-close" onClick={() => setShowMessageModal(false)}>✕</button>
+                                            </div>
+                                            <form onSubmit={handleSendMessage}>
+                                              <div className="form-group">
+                                                <label>Mensaje *</label>
+                                                <textarea
+                                                  required
+                                                  value={messageText}
+                                                  onChange={e => setMessageText(e.target.value)}
+                                                  placeholder="Escribe tu mensaje..."
+                                                  rows="4"
+                                                  style={{ width: '100%' }}
+                                                />
+                                              </div>
+                                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                                                <button type="button" className="btn-secondary" onClick={() => setShowMessageModal(false)}>Cancelar</button>
+                                                <button type="submit" className="btn-primary">Enviar</button>
+                                              </div>
+                                            </form>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
                     <div className="form-group">
                       <label>Cita asociada (opcional)</label>
                       <input
