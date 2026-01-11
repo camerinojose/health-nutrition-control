@@ -64,6 +64,7 @@ export default function ForgotPassword({ onBack }) {
               onChange={e => setNewPassword(e.target.value)}
               placeholder="••••••••"
               required
+              autoComplete="new-password"
             />
           </div>
           <button type="submit" className="auth-button" disabled={loading}>

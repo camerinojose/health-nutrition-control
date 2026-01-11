@@ -15,6 +15,7 @@ export default function Login({onLogin, onSwitchToRegister}){
   const [err,setErr] = useState(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showForgot, setShowForgot] = useState(false)
+  const [loading, setLoading] = useState(false);
 
   // Monitorear token en localStorage (cambios desde popup de Google)
   useEffect(() => {
@@ -31,6 +32,7 @@ export default function Login({onLogin, onSwitchToRegister}){
   const submit = async (e)=>{
     e.preventDefault()
     setErr(null)
+    setLoading(true);
     try{
       const res = await api.post('/login',{email,password})
       const { token } = res.data
@@ -38,6 +40,8 @@ export default function Login({onLogin, onSwitchToRegister}){
       onLogin(token)
     }catch(e){
       setErr(e.response?.data?.error || 'Error al iniciar sesión')
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -90,6 +94,7 @@ export default function Login({onLogin, onSwitchToRegister}){
                 onChange={e=>setEmail(e.target.value)}
                 placeholder="tu@email.com"
                 required
+                autoComplete="username"
               />
             </div>
           </div>
@@ -105,6 +110,7 @@ export default function Login({onLogin, onSwitchToRegister}){
                 onChange={e=>setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
+                autoComplete="current-password"
               />
               <button 
                 type="button" 
@@ -116,7 +122,9 @@ export default function Login({onLogin, onSwitchToRegister}){
             </div>
           </div>
 
-          <button type="submit" className="auth-button">{t('login')}</button>
+          <button type="submit" className="auth-button" disabled={loading}>
+            {loading ? t('loading') || 'Cargando...' : t('login')}
+          </button>
           <button type="button" className="link-button" style={{marginTop: 8, marginBottom: 8}} onClick={() => setShowForgot(true)}>
             {t('forgotPassword') || '¿Olvidaste tu contraseña?'}
           </button>
