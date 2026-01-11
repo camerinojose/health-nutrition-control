@@ -7,19 +7,19 @@ export default function Sidebar({ isOpen, onClose, onNavigate, currentView, onLo
 
   const menuItems = [
     { id: 'home', icon: '🏠', label: t('home') },
-    { id: 'choose-nutritionist', icon: '👨‍⚕️', label: 'Elegir Nutriólogo' },
+    { id: 'choose-nutritionist', icon: '👨‍⚕️', label: t('chooseNutritionist') },
     { id: 'diet', icon: '🍽️', label: t('myDiet') },
     { id: 'progress', icon: '📊', label: t('progress') },
     { id: 'achievements', icon: '🏆', label: t('achievements') },
     { id: 'recipes', icon: '📖', label: t('recipes') },
     { id: 'products', icon: '🛒', label: t('products') },
-    { id: 'gemini', icon: '✨', label: 'Gemini AI' },
+    { id: 'gemini', icon: '✨', label: t('geminiAI') },
     { id: 'messages', icon: '💬', label: t('messages') },
     { id: 'appointments', icon: '📅', label: t('appointments') },
-    { id: 'book-appointment', icon: '🗓️', label: 'Reservar Cita' },
+    { id: 'book-appointment', icon: '🗓️', label: t('bookAppointment') },
     { id: 'whatsapp', icon: '📱', label: t('whatsappNutritionist') },
     { id: 'profile', icon: '👤', label: t('profile') },
-    { id: 'settings', icon: '⚙️', label: t('settings') || 'Configuración' },
+    { id: 'settings', icon: '⚙️', label: t('settings') },
     { id: 'support', icon: '❓', label: t('support') },
   ];
 

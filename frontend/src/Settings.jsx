@@ -66,36 +66,35 @@ const Settings = ({ profile, onUpdate }) => {
 
   return (
     <div className="settings-container">
-      <h2>⚙️ {t('settings') || 'Configuración'}</h2>
+      <h2>⚙️ {t('settings')}</h2>
 
       <div className="settings-section">
-        <h3>🔔 Notificaciones Push</h3>
-        
+        <h3>🔔 {t('pushNotifications')}</h3>
         <div className="permission-status">
-          <p><strong>Estado:</strong> {
-            notificationPermission === 'granted' ? '✅ Activadas' :
-            notificationPermission === 'denied' ? '❌ Bloqueadas' :
-            notificationPermission === 'unsupported' ? '⚠️ No soportadas' :
-            '⏸️ Sin configurar'
+          <p><strong>{t('status')}:</strong> {
+            notificationPermission === 'granted' ? t('notificationsEnabled') :
+            notificationPermission === 'denied' ? t('notificationsBlocked') :
+            notificationPermission === 'unsupported' ? t('notificationsUnsupported') :
+            t('notificationsUnconfigured')
           }</p>
         </div>
 
         {notificationPermission === 'default' && (
           <button className="btn-primary" onClick={handleRequestPermission}>
-            Activar Notificaciones
+            {t('enableNotifications')}
           </button>
         )}
 
         {notificationPermission === 'denied' && (
           <p className="warning-text">
-            ⚠️ Las notificaciones están bloqueadas. Ve a la configuración de tu navegador para habilitarlas.
+            {t('notificationsBlockedWarning')}
           </p>
         )}
 
         {notificationPermission === 'granted' && (
           <>
             <button className="btn-secondary" onClick={handleTestNotification}>
-              Probar Notificación
+              {t('testNotification')}
             </button>
 
             <div className="setting-item">
@@ -105,7 +104,7 @@ const Settings = ({ profile, onUpdate }) => {
                   checked={enableReminders}
                   onChange={(e) => setEnableReminders(e.target.checked)}
                 />
-                <span>Habilitar recordatorios de comidas</span>
+                <span>{t('enableMealReminders')}</span>
               </label>
             </div>
           </>
@@ -114,14 +113,14 @@ const Settings = ({ profile, onUpdate }) => {
 
       {enableReminders && notificationPermission === 'granted' && (
         <div className="settings-section">
-          <h3>⏰ Horarios de Comida</h3>
+          <h3>⏰ {t('mealTimes')}</h3>
           <p className="section-description">
-            Configura los horarios para recibir recordatorios
+            {t('configureMealTimes')}
           </p>
 
           <div className="time-inputs">
             <div className="time-input-group">
-              <label>🌅 Desayuno</label>
+              <label>🌅 {t('breakfast')}</label>
               <input
                 type="time"
                 value={mealTimes.breakfast}
@@ -130,7 +129,7 @@ const Settings = ({ profile, onUpdate }) => {
             </div>
 
             <div className="time-input-group">
-              <label>☀️ Comida</label>
+              <label>☀️ {t('lunch')}</label>
               <input
                 type="time"
                 value={mealTimes.lunch}
@@ -139,7 +138,7 @@ const Settings = ({ profile, onUpdate }) => {
             </div>
 
             <div className="time-input-group">
-              <label>🍎 Snack</label>
+              <label>🍎 {t('snack')}</label>
               <input
                 type="time"
                 value={mealTimes.snack}
@@ -148,7 +147,7 @@ const Settings = ({ profile, onUpdate }) => {
             </div>
 
             <div className="time-input-group">
-              <label>🌙 Cena</label>
+              <label>🌙 {t('dinner')}</label>
               <input
                 type="time"
                 value={mealTimes.dinner}
@@ -165,7 +164,7 @@ const Settings = ({ profile, onUpdate }) => {
           onClick={handleSaveSettings}
           disabled={saving}
         >
-          {saving ? 'Guardando...' : '💾 Guardar Configuración'}
+          {saving ? t('saving') : `💾 ${t('saveSettings')}`}
         </button>
       </div>
     </div>
