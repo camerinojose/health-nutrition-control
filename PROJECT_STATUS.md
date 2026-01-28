@@ -1,6 +1,24 @@
 # Estado del Proyecto - BienestarApp / WellnessApp
 **Última actualización:** 8 de Enero, 2026 - 23:40
 
+## 🗃️ Migración a PostgreSQL (25 Ene 2026)
+
+- Se inició la migración de la base de datos de SQLite a PostgreSQL para producción.
+- Se generaron los scripts de creación de tablas en PostgreSQL (`create_tables_postgres.sql`).
+- Se exportaron los datos de todas las tablas principales a archivos CSV.
+- Se crearon todas las tablas en PostgreSQL exitosamente.
+- Se importaron los datos de `users.csv`, `recipes.csv`, `nutritionist_availability.csv`, `deleted_messages.csv`, `health_profiles.csv` sin errores.
+- Se detectaron los siguientes problemas durante la importación:
+   - ❗ Errores de llave foránea: Algunos registros referencian IDs que no existen en la tabla padre (ej. user_id, appointment_id, etc.).
+   - ❗ Errores de codificación: Algunos archivos CSV están en formato WIN1252 y deben convertirse a UTF-8 antes de importar.
+   - ❗ Columnas extra: Algunos CSV tienen más columnas que las definidas en la tabla destino.
+- Próximos pasos:
+   - Convertir todos los CSV problemáticos a UTF-8.
+   - Revisar y limpiar los datos para asegurar integridad referencial (IDs válidos en todas las FK).
+   - Corregir los archivos CSV con columnas extra para que coincidan con la estructura de la tabla.
+- El backend ya puede conectarse a PostgreSQL, pero la migración de datos requiere limpieza adicional antes de estar 100% operativa.
+
+
 ### 🔄 Cambios recientes (8 Ene 2026 - Sesión Tarde)
 - **Navegación de Notificaciones:** Al hacer clic en una notificación, el usuario ahora es redirigido a la página correspondiente (citas, mensajes, planes de comida, etc.) según el tipo de notificación (8 tipos soportados)
 - **Manejo de Errores Mejorado:** Notificaciones que no pertenecen al usuario (403) o no existen (404) se manejan silenciosamente sin mostrar errores en consola
@@ -27,6 +45,16 @@ Aplicación COMPLETA de seguimiento nutricional con:
 
 ### 📝 Nota Importante de Mantenibilidad
 **Todos los cambios realizados en Web pueden ser adaptados para Mobile de ser necesario, y viceversa.** La estructura está diseñada para ser escalable:
+
+---
+
+## 🚨 Troubleshooting & Known Errors
+
+For a list of common errors, warnings, and their solutions, see:
+
+- [KNOWN_ERRORS_AND_SOLUTIONS.md](KNOWN_ERRORS_AND_SOLUTIONS.md)
+
+If you encounter a runtime, build, or Expo error, check that file first for step-by-step solutions. Add new issues and fixes as they are discovered.
 - Componentes Web (React) y Mobile (React Native) comparten lógica de negocio
 - Estilos separados por plataforma (CSS para web, StyleSheet para mobile)
 - API calls centralizadas en ambas plataformas
@@ -56,78 +84,79 @@ Aplicación COMPLETA de seguimiento nutricional con:
   - Axios para API calls
   - i18next para internacionalización
   - AsyncStorage para almacenamiento local
-  - expo-auth-session para OAuth
-- [x] Configuración de Android:
-  - Gradle 8.13
-  - Android Build Tools 36.0.0
-  - compileSdk 36
-  - targetSdk 36
-  - minSdk 24
-  - NDK version 29.0.14206865
-- [x] Pantallas creadas:
-  - DashboardScreen.js
-  - MealPlanScreen.js
-  - ProgressScreen.js
-  - RecipesScreen.js
-  - AchievementsScreen.js
-  - AppointmentsScreen.js
-  - MessagesScreen.js
-  - SettingsScreen.js
-  - SupportScreen.js
-- [x] Servicios:
-  - api.js (integración con backend)
-  - auth.js (autenticación JWT)
-  - i18n.js (soporte multiidioma ES/EN)
-- [ ] 🚧 Pendiente: Construcción exitosa de APK para Android Studio
-  - Configurando SDK paths
-  - Resolviendo dependencias de Gradle
-  - Ajustando configuración de build
-- [ ] 🚧 Pendiente (paridad con Web para rol Nutrióloga)
-   - Panel móvil para nutrióloga con pestañas: pacientes, calendario, recetas, recomendaciones y stats básicos
-   - Listar pacientes, ver detalles/historial y gráficas simples; búsqueda y filtros
-   - Calendario de citas (mes/semana) con notas, proponer cambios y actualizar estado
-   - CRUD de recetas y formulario de recomendaciones vinculadas a citas/pacientes
-   - Creación/edición de planes de comida por paciente reutilizando endpoints actuales
-   - Gestión de disponibilidad y slots; mostrar slots a pacientes
-   - Inbox de notificaciones en app (leer/marcar todas) con navegación contextual
-   - Mensajes con conversaciones consolidadas y soporte push tap → abre conversación
-   - Detección de rol en login y navegación separada paciente/nutrióloga
-   - Configurar base URL por entorno (sin hardcode) y estados offline/carga/vacío
 
-### 1. Sistema de Autenticación y Usuarios
-- [x] Registro de usuarios
-- [x] Login con JWT
-- [x] Roles: `user`, `nutritionist`, `admin`
-- [x] Middleware de autenticación
-- [x] Middleware específico para nutrióloga/admin
-- [x] Gestión de perfiles
+# Project Status
 
-### 2. Panel de Usuario (Paciente)
-- [x] **Dashboard** - Vista general con resumen
-- [x] **Perfil** - Información personal y de salud
-  - Datos personales (nombre, email, edad, sexo, altura)
-  - Objetivos de peso
-  - Condiciones médicas, medicamentos, alergias
-  - Nivel de actividad física
-- [x] **Historial** - Registro de peso, % grasa, % músculo
-- [x] **OCR Upload** - Escaneo automático de reportes InBody/Tanita
-- [x] **Plan de Comidas (MealPlan)**
-  - Visualización de plan semanal
-  - Registro de comidas completadas
-  - Sistema de snacks
-- [x] **Progreso** - Gráficas con Chart.js
-  - Gráfica de peso
-  - Gráfica de % músculo
-  - Gráfica de % grasa corporal
-  - Filtros temporales (30/90/180 días, todo)
-  - Estadísticas de cambio
-- [x] **Logros (Achievements)**
-  - Sistema de badges/medallas
-  - 12 logros diferentes
-  - Cálculo de rachas (streaks)
-  - Estadísticas generales
-- [x] **Recetas**
-  - Catálogo con 8 recetas iniciales
+## Current State (as of 2026-01-17)
+
+### Mobile App
+- Refactored for modularity and best practices (separated screens/components, improved error handling, modern UI/UX)
+- JWT authentication and token storage with AsyncStorage
+- Centralized API logic with axios and JWT interceptor
+- Robust medicine logic, notifications, and appointment handling
+- All major warnings/errors resolved (SafeAreaView, Platform import, property names, etc.)
+- Login flow and view state transitions confirmed working (see logs)
+- **Expo Go is no longer supported for push notifications and advanced features**
+- **Development builds are now required for full functionality**
+
+### Backend
+- Go (Gin) API with JWT, SQLite
+- Endpoints for authentication, profile, medicines, appointments, etc.
+- All endpoints tested and integrated with mobile app
+
+### Deployment
+- Render deployment guides and scripts available
+- GitHub integration and deployment instructions provided
+
+## Next Steps
+- Always use a development build for mobile testing (Expo Go is deprecated for this project)
+- Continue excluding Expo Go-specific features and limitations
+- Focus on development build workflow for all future mobile work
+
+## How to Create a Development Build (Expo)
+
+1. **Install EAS CLI (Expo Application Services):**
+   ```sh
+   npm install -g eas-cli
+   ```
+2. **Login to Expo account:**
+   ```sh
+   eas login
+   ```
+3. **Configure EAS for your project:**
+   ```sh
+   eas build:configure
+   ```
+   - Follow prompts to set up Android/iOS builds.
+4. **Build a development client:**
+   ```sh
+   eas build --profile development --platform android
+   # or for iOS:
+   eas build --profile development --platform ios
+   ```
+5. **Install the build on your device:**
+   - Download the .apk (Android) or .ipa (iOS) from the Expo dashboard or build output.
+   - Install on your device (for Android, you can use adb or open the .apk directly).
+6. **Run your app:**
+   - Open the installed development build app on your device.
+   - Scan the QR code or use the app as you would in production.
+
+**Note:**
+- Development builds support all native modules and push notifications.
+- Expo Go is no longer recommended for this project.
+
+---
+
+## Recent Changes
+- Added robust logging to login and navigation flows
+- Confirmed login and dashboard transitions work as expected
+- Updated all medicine and appointment logic for reliability
+- Removed Expo Go-specific code and warnings
+- Updated documentation for development build workflow
+
+---
+
+*Always refer to this file for the latest project status and workflow instructions.*
   - Búsqueda por nombre
   - Filtros por categoría
   - Modal con detalles completos
@@ -528,43 +557,49 @@ frontend/src/
   - Sistema de recomendaciones personalizadas
 
 ### Mejoras Propuestas
-- [ ] **Sistema de Notificaciones In-App**
   - Bell icon con contador
   - Dropdown con notificaciones recientes
   - Marcadores de leído/no leído
   
-- [ ] **Dashboard de Nutrióloga Mejorado**
   - Estadísticas generales (total pacientes activos, citas del día)
   - Gráficas de progreso general
   - Alertas de pacientes que requieren atención
   - Calendario visual para citas
   
-- [ ] **Videoconferencia**
   - Integración con servicio de video
   - Citas virtuales
   - Grabación de sesiones (opcional)
   
-- [ ] **Reportes y Analytics**
   - Generar PDF con reporte de progreso
   - Comparativas mensuales
   - Exportar datos a Excel
   
-- [ ] **Gamificación Avanzada**
   - Sistema de puntos
   - Niveles de usuario
   - Desafíos semanales
   - Tabla de clasificación (leaderboard)
   
-- [ ] **Integraciones**
   - Fitbit / Apple Health
   - Google Fit
   - Balanzas inteligentes
   
-- [ ] **Mejoras de Seguridad**
   - Autenticación de 2 factores (2FA)
   - Recuperación de contraseña por email
   - Límite de intentos de login
   - Sesiones concurrentes controladas
+
+- [ ] **IA para Análisis Nutricional de Imágenes**
+   - Permitir al usuario tomar o subir una foto de su comida
+   - Analizar la imagen usando IA para estimar calorías, macronutrientes y tipo de alimento
+   - Mostrar información nutricional estimada y recomendaciones
+   - Integrar resultados al registro de comidas del usuario
+
+- [ ] **Registro Integral del Paciente (Onboarding Mejorado)**
+   - Formulario inicial completo para nuevos pacientes
+   - Recopilar historial médico, enfermedades, medicamentos, alergias y preferencias alimenticias
+   - Permitir registrar gustos y restricciones para personalizar la dieta
+   - Visualización y edición del perfil completo del paciente
+   - Validaciones y experiencia de usuario mejorada
 
 ---
 
@@ -732,6 +767,32 @@ El sistema usa fallbacks para desarrollo, pero en producción configurar:
 - ✅ **Instalado:** APK en dispositivo físico (adb install)
 - 📱 **App lista para:** Testing y desarrollo en dispositivo real
 
+### 2026-01-25 Backend Refactor & Nutritionist Endpoint Stubs
+
+- Refactored main.go to fix duplicate API and auth group initializations.
+- Moved medicines CRUD endpoints inside the authenticated group.
+- Ensured proper initialization order for jwtKey and db.
+- Cleaned up redundant variable declarations in main().
+- Added stub handler functions for all nutritionist endpoints to allow backend compilation:
+    - listPatientsHandler
+    - getPatientDetailsHandler
+    - getPatientHistoryHandler
+    - createRecipeHandler
+    - updateRecipeHandler
+    - deleteRecipeHandler
+    - createRecommendationHandler
+    - getRecommendationsHandler
+    - getNutritionistAppointmentsHandler
+    - updateAppointmentNotesHandler
+    - proposeAppointmentChangeHandler
+    - getNutritionistAvailabilityHandler
+    - setNutritionistAvailabilityHandler
+    - getAvailableSlotsHandler
+    - createMealPlanForPatientHandler
+    - getPatientMealPlanHandler
+- All stub handlers currently return a JSON message indicating they are not implemented.
+- Project now compiles and runs; further implementation needed for nutritionist features.
+
 ---
 
 ## 🔧 Estado Actual: Configuración Android Studio
@@ -827,525 +888,7 @@ export ANDROID_HOME="C:/Users/camer/AppData/Local/Android/Sdk"
 **Estado del sistema:** 
 - ✅ Backend Web: Totalmente funcional, corriendo en :8080
 - ✅ Frontend Web: Totalmente funcional, corriendo en :5174
-- ✅ Mobile App: APK construido exitosamente, listo para Android Studio
-**Base de datos:** ✅ Migrada y con datos de prueba
-
----
-## ✅ UNIT TESTING SUITE ⭐ NUEVO
-
-### Frontend Testing (React with Vitest)
-**Status:** ✅ Complete and Ready
-
-**Framework:** Vitest + @testing-library/react
-**Coverage:** 36 test cases across 5 test files
-
-#### Test Files Created:
-1. **setup.js** - Test environment configuration
-   - Mock window.matchMedia
-   - Mock localStorage
-   - Mock window.alert/prompt
-
-2. **Messages.test.jsx** - 15 test cases
-   - ✅ Initial load and loading state
-   - ✅ Conversation loading and display
-   - ✅ Empty state handling
-   - ✅ Conversation selection
-   - ✅ Message loading and unread marking
-   - ✅ Message sending and validation
-   - ✅ Input clearing after send
-   - ✅ Send button disabled state
-   - ✅ Message differentiation (own vs other)
-   - ✅ Read status indicators
-   - ✅ Polling functionality
-   - ✅ Error handling and recovery
-
-3. **API Module (api.test.js)** - 8 test cases
-   - ✅ Token authorization header
-   - ✅ Missing token handling
-   - ✅ Base URL configuration
-   - ✅ Environment variable support
-   - ✅ Network error handling
-   - ✅ 401/404 HTTP errors
-   - ✅ Request interceptors
-
-4. **Authentication (auth.test.js)** - 18 test cases
-   - ✅ Token storage/retrieval/clearing
-   - ✅ JWT structure validation
-   - ✅ Payload decoding
-   - ✅ Role identification (user, nutritionist, admin)
-   - ✅ Role-based access control
-   - ✅ Session management
-   - ✅ Login/logout state tracking
-
-5. **Dashboard (Dashboard.test.jsx)** - 6 test cases
-   - ✅ Component rendering
-   - ✅ Health profile loading
-   - ✅ User data display
-   - ✅ Error handling
-
-6. **NutritionistDashboard (NutritionistDashboard.test.jsx)** - 26 test cases ⭐ NUEVO
-   - ✅ Tab navigation (Patients, Appointments, Recipes)
-   - ✅ Loading patient list
-   - ✅ Displaying patient information
-   - ✅ Empty state handling
-   - ✅ Patient details loading
-   - ✅ Recommendation form display
-   - ✅ Recommendation submission
-   - ✅ Form validation
-   - ✅ Appointment loading and filtering
-   - ✅ Status filtering (scheduled, completed, cancelled)
-   - ✅ Completing appointments with notes
-   - ✅ Cancelling appointments with reason
-   - ✅ Recipe CRUD operations (Create, Read, Update, Delete)
-   - ✅ Recipe card display
-   - ✅ Nutritional information display
-   - ✅ Form validation for recipes
-   - ✅ Error handling (API, submission, deletion)
-   - ✅ Loading states
-
-#### Running Frontend Tests:
-```bash
-cd frontend
-npm install  # Install dependencies
-npm test     # Run all tests
-npm run test:ui      # Interactive UI mode
-npm run test:coverage # Coverage report
-```
-
-#### Configuration Files Added:
-- **vitest.config.js** - Vitest configuration with jsdom environment
-- **package.json** - Updated with test scripts and dev dependencies
-
-### Backend Testing (Go)
-**Status:** ✅ Test Structure Complete
-
-**Framework:** Go testing package
-**Test Functions:** 10 comprehensive test suites
-
-#### Test Coverage:
-1. **TestUserRegistration** - 5 test cases
-   - Valid registration
-   - Duplicate email detection
-   - Invalid email format
-   - Weak password validation
-   - Empty field validation
-
-2. **TestUserLogin** - 4 test cases
-   - Valid credentials
-   - Wrong password handling
-   - User not found
-   - Empty credentials
-
-3. **TestJWTTokenGeneration** - 4 test cases
-   - User token generation
-   - Nutritionist token generation
-   - Admin token generation
-   - Invalid user ID handling
-
-4. **TestHealthProfile** - 4 test cases
-   - Valid profile creation
-   - Age validation
-   - Height validation
-   - Weight validation
-
-5. **TestMealPlan** - 3 test cases
-   - Valid meal plan
-   - Empty name rejection
-   - Invalid user handling
-
-6. **TestRecipeOperations** - 3 test cases
-   - Valid recipe creation
-   - Calorie validation
-   - Recipe name validation
-
-7. **TestAppointmentOperations** - 3 test cases
-   - Valid appointment creation
-   - Patient ID validation
-   - Status validation
-
-8. **TestMessageOperations** - 4 test cases
-   - Valid message sending
-   - Content validation
-   - Sender validation
-   - Self-message prevention
-
-9. **TestAuthenticationMiddleware** - 4 test cases
-   - Valid token handling
-   - Invalid token rejection
-   - Expired token handling
-   - Missing token rejection
-
-10. **TestRoleBasedAccess** - 4 test cases
-    - User access control
-    - Nutritionist access control
-    - Admin access control
-    - Resource authorization
-
-11. **TestDataValidation** - 3 test cases
-    - Valid data acceptance
-    - Invalid format rejection
-    - Required field validation
-
-#### Running Backend Tests:
-```bash
-cd backend
-go test -v ./...                    # Verbose output
-go test -cover ./...                # With coverage
-go test -race ./...                 # Race detector
-go test -coverprofile=coverage.out ./...  # Coverage file
-go tool cover -html=coverage.out    # HTML report
-```
-
-### Testing Documentation
-**File:** TESTING_GUIDE.md
-- Complete setup instructions
-- How to run tests for both frontend and backend
-- Writing new tests (templates provided)
-- Best practices and patterns
-- Troubleshooting guide
-- CI/CD integration examples
-
-### Test Architecture
-
-#### Frontend Test Structure:
-```
-frontend/
-├── vitest.config.js              # Vitest configuration
-├── package.json                  # Updated with test deps
-└── src/tests/
-    ├── setup.js                  # Test environment setup
-    ├── Messages.test.jsx         # Component tests
-    ├── Dashboard.test.jsx        # Component tests
-    ├── api.test.js              # API utility tests
-    └── auth.test.js             # Auth utility tests
-```
-
-#### Backend Test Structure:
-```
-backend/
-└── main_test.go                  # All Go tests
-    ├── TestUserRegistration      # Auth tests
-    ├── TestUserLogin
-    ├── TestJWTTokenGeneration
-    ├── TestHealthProfile         # Profile tests
-    ├── TestMealPlan              # Feature tests
-    ├── TestRecipeOperations
-    ├── TestAppointmentOperations
-    ├── TestMessageOperations
-    ├── TestAuthenticationMiddleware  # Middleware tests
-    ├── TestRoleBasedAccess       # RBAC tests
-    └── TestDataValidation        # Validation tests
-```
-
-### Mocking Strategy
-
-#### Frontend Mocking:
-- **API Calls:** vi.mock with resolved/rejected values
-- **i18n:** Mock useTranslation hook
-- **External Libraries:** Mock as needed
-- **Browser APIs:** localStorage, window.matchMedia, alert/prompt
-
-#### Backend Mocking:
-- **Database:** Use test database or in-memory
-- **External Services:** Mock HTTP clients
-- **Time:** Use time mocking for timestamp tests
-
-### CI/CD Integration
-
-#### GitHub Actions Example:
-```yaml
-name: Tests
-on: [push, pull_request]
-
-jobs:
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-      - run: cd frontend && npm install && npm test -- --run
-  
-  backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.24'
-      - run: cd backend && go test -v -race -cover ./...
-```
-
-### Test Metrics
-
-#### Current Status:
-- **Total Test Cases:** 73 ⭐ UPDATED
-- **Frontend Coverage:** 73 tests across 6 files
-- **Backend Coverage:** 43 test cases covering 11 suites
-- **Mocked Dependencies:** 15+
-- **Test Files:** 7
-
-#### Coverage Goals:
-- **Frontend Components:** 80%+ coverage for critical components
-- **Backend Functions:** 75%+ coverage for core business logic
-- **API Integration:** End-to-end scenario testing
-
-### Next Steps for Testing
-
-1. **Expand Component Tests**
-   - [ ] Add tests for Recipes component
-   - [ ] Add tests for Progress component
-   - [ ] Add tests for Appointments component
-   - [ ] Add tests for AdminPanel component
-
-2. **Integration Tests**
-   - [ ] Component-to-API integration
-   - [ ] User flow testing (login → action → result)
-   - [ ] Multi-component interactions
-
-3. **E2E Testing**
-   - [ ] Set up Cypress or Playwright
-   - [ ] User journey testing
-   - [ ] Cross-browser testing
-
-4. **Backend Integration Tests**
-   - [ ] Database integration tests
-   - [ ] API endpoint testing
-   - [ ] Authentication flow testing
-
-5. **Performance Testing**
-   - [ ] Frontend performance metrics
-   - [ ] Backend load testing
-   - [ ] Database query optimization
-
----
-## � REVISIÓN DE CÓDIGO - MESSAGES.JSX ✅ COMPLETADO
-
-### Análisis del componente Messages.jsx (321 líneas)
-
-**Estado:** ✅ Totalmente funcional y bien estructurado
-
-#### Fortalezas Identificadas:
-1. **Gestión de Estado Limpia**
-   - Uso correcto de hooks (useState, useEffect, useRef)
-   - Separación clara entre conversaciones y mensajes
-   - Estado de carga manejado correctamente
-
-2. **Polling Inteligente**
-   - Intervalos correctamente limpiados en cleanup
-   - Actualización independiente de conversaciones y mensajes
-   - Poll cada 5 segundos sin bloqueo de UI
-
-3. **UX de Conversaciones**
-   - Panel dual (conversaciones + mensajes) muy intuitivo
-   - Avatar con emojis diferenciados (👨‍⚕️ nutricionista vs 👤 usuario)
-   - Badges de mensajes no leídos
-   - Timestamps relativos inteligentes
-   - Auto-scroll al final de mensajes
-
-4. **Funcionalidad de Mensajes**
-   - Lectura automática de mensajes al cargar
-   - Indicadores de entrega (✓ enviado, ✓✓ leído)
-   - Separadores de fecha en el historial
-   - Formulario de envío con validación
-
-5. **Manejo de Errores**
-   - Try-catch en todas las operaciones async
-   - Fallback a arrays vacíos si datos no existen
-   - Logs informativos para debugging
-
-6. **Internacionalización**
-   - Usa `useTranslation` de react-i18next
-   - Textos en español como fallback
-
-#### Puntos a Considerar:
-1. **API de Usuario Duro Codificado**
-   - En `startNewConversation()`, el recipient_id es hardcodeado a 1
-   - Suggestion: Implementar búsqueda de usuarios o auto-detectar nutricionista asignada
-
-2. **Escalabilidad de Polling**
-   - Actual: Actualización cada 5 segundos
-   - Para apps más grandes: Considerar WebSockets o Server-Sent Events (SSE)
-   - Para ahora: Suficiente para uso casual
-
-3. **Persistencia de Conversaciones**
-   - Las conversaciones se cargan pero no se cachean localmente
-   - En móvil: Considerar AsyncStorage para offline mode
-
-#### Métricas del Código:
-- **Líneas totales:** 321
-- **Líneas funcionales:** ~280
-- **Complejidad ciclomática:** Baja (bien modularizado)
-- **Funciones principales:** 7 (loadConversations, loadMessages, selectConversation, sendMessage, startNewConversation, formatMessageTime, render)
-- **Dependencias externas:** 4 (React, react-i18next, api, CSS)
-
-#### Resumen:
-El componente Messages está **completamente implementado** con UX profesional, manejo robusto de errores y estructura escalable. Funcionando perfectamente con el backend.
-
----
-
-## �📋 TAREAS PENDIENTES (TODO LIST)
-
-### 🔴 PRIORITARIAS - RECURSOS NECESARIOS
-
-#### 1. Gemini AI - API Key Requerida
-**Estado:** ⏳ BLOQUEADO - Esperando API Key
-**Pasos:**
-- [ ] Obtener API Key gratis en: https://aistudio.google.com/apikey
-- [ ] Compartir la key para comenzar implementación
-- [ ] Instalar paquete: `npm install @google/generative-ai`
-
-#### 2. Gemini AI - Mobile Implementation
-**Estado:** ⏳ PENDIENTE
-**Lo que se hará:**
-- [ ] Crear `mobile/src/GeminiChatScreen.js`
-- [ ] Configurar variables de entorno en `mobile/.env.local`
-- [ ] Agregar ruta de navegación en App.js
-- [ ] UI: Chat interface con historial de conversaciones
-- [ ] Funcionalidad: Enviar preguntas nutricionales a Gemini
-- [ ] Sistema de mensajes con timestamps
-
-#### 3. Gemini AI - Web Implementation
-**Estado:** ⏳ PENDIENTE
-**Lo que se hará:**
-- [ ] Crear `frontend/src/GeminiChat.jsx`
-- [ ] Configurar variables de entorno en `frontend/.env.local`
-- [ ] Integrar en componente de navegación principal
-- [ ] UI: Modal o página dedicada para chat
-- [ ] Funcionalidad: Chat en tiempo real con Gemini
-- [ ] Historial de conversaciones guardado
-
----
-
-## 🟡 SECUNDARIAS - SIN REQUISITOS
-
-#### 4. Mobile - Build y Testing
-**Estado:** 🔧 EN PROGRESO
-**Lo que falta:**
-- [ ] Compilación final del APK (./gradlew assembleRelease)
-- [ ] Testing en dispositivo real o emulador
-- [ ] Optimizaciones de rendimiento
-- [ ] Signing del APK para Play Store
-
-#### 5. Web - Mejoras UI/UX
-**Estado:** ✅ COMPLETO pero...
-**Mejoras opcionales:**
-- [ ] Tema oscuro
-- [ ] Más animaciones
-- [ ] Offline mode
-- [ ] PWA (Progressive Web App)
-
-#### 6. Backend - Endpoints Opcionales
-**Estado:** ✅ COMPLETO
-**Endpoints actuales:**
-- ✅ OAuth Google funcionando
-- ✅ Email/Password auth
-- ✅ CRUD de usuarios, recetas, citas, mensajes
-- ✅ Historial de peso
-- Endpoints Gemini (opcional):
-  - [ ] GET /ai/chat-history (guardar historial)
-  - [ ] POST /ai/chat (logging de chats)
-
----
-
-## 📥 REQUISITOS PARA COMPLETAR
-
-### Información Necesaria del Usuario:
-
-| Item | Estado | Cómo obtenerlo |
-|------|--------|----------------|
-| **Gemini API Key** | ⏳ PENDIENTE | https://aistudio.google.com/apikey |
-| **Android Device/Emulator** | ⏳ PENDIENTE | Android Studio o dispositivo físico |
-| **GitHub Copilot** | 📋 OPCIONAL | $20/mes o $200/año |
-
----
-
-## ✨ ESTADO ACTUAL POR MÓDULO
-
-### Backend (Go) - ✅ COMPLETO
-```
-✅ Autenticación (email/password + Google OAuth)
-✅ Usuarios y Perfiles
-✅ Meal Plans
-✅ Recetas
-✅ Citas
-✅ Mensajes
-✅ Historial de Peso
-✅ Logros/Badges
-✅ OCR Processing
-✅ Token Management
-🚧 Gemini Integration (preparado para agregar)
-```
-
-### Frontend Web - ✅ COMPLETO
-```
-✅ Dashboard
-✅ Login/Register
-✅ Perfil
-✅ Meal Plan
-✅ Recetas
-✅ Progress (gráficas)
-✅ Achievements
-✅ Citas
-✅ Mensajes
-✅ Settings
-✅ Support (FAQ)
-✅ Internacionalización (ES/EN)
-🚧 GeminiChat (esperando API key)
-```
-
-### Mobile App - ✅ FUNCIONAL
-```
-✅ Estructura Expo
-✅ Google OAuth Login
-✅ Email/Password Login
-✅ Dashboard
-✅ Meal Plan
-✅ Recetas
-✅ Progress
-✅ Achievements
-✅ Citas
-✅ Mensajes
-✅ Settings
-✅ Support (FAQ)
-✅ Token Persistence (AsyncStorage)
-✅ Botones de navegación (Back buttons)
-✅ Internacionalización (ES/EN)
-🚧 GeminiChat (esperando API key)
-```
-
----
-
-## 🎯 PRÓXIMOS PASOS
-
-### INMEDIATO (Esta semana):
-1. **Obtener Gemini API Key** → Ir a https://aistudio.google.com/apikey
-2. **Compartir la key conmigo** → Empezaré implementación
-3. **Compilar APK final** → Para testing
-
-### CORTO PLAZO (Próximas 2 semanas):
-1. Implementar Gemini Chat en Mobile
-2. Implementar Gemini Chat en Web
-3. Testing completo de la app
-4. Optimizaciones de rendimiento
-
-### MEDIANO PLAZO (Mes 2):
-1. Deploy a Play Store (móvil)
-2. Deploy a producción (web)
-3. Configurar dominio personalizado
-4. SSL/HTTPS en backend
-
----
-
-## 📞 CONTACTO / SOPORTE
-
-**Backend URL:** https://nonillusional-searingly-loren.ngrok-free.dev
-**Frontend URL:** http://localhost:5174 (local)
-**Mobile:** APK en `mobile/android/app/build/outputs/apk/debug/`
-
-**Última compilación exitosa:** 2026-01-01 14:30 UTC
-**APK Location:** `mobile/android/app/build/outputs/apk/debug/app-debug.apk`n :8080
-- ✅ Frontend Web: Totalmente funcional, corriendo en :5174
 - 🚧 Mobile App: En desarrollo, configurando Android Studio
 **Base de datos:** ✅ Migrada y con datos de prueba
+
+<!-- Dummy push: no functional changes, just to trigger redeploy -->
