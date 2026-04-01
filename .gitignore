@@ -1,1 +1,69 @@
-node_modules
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Testing
+coverage/
+.nyc_output
+
+# Production builds
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backend specific
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.db
+*.db-shm
+*.db-wal
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/*.log
+backend/test.exe
+backend/app.exe
+backend/main.exe
+backend/bienestarapp.exe
+
+# Mobile specific
+*.apk
+*.aab
+*.ipa
+.expo/
+.expo-shared/
+output.apks
+bundletool-all-*.jar
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# CSV data exports (optional - uncomment if you don't want to track them)
+# *.csv

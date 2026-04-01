@@ -1,6 +1,6 @@
 # BienestarApp - Backend (Go)
 
-API REST en Go (Gin) con autenticación JWT y SQLite para el seguimiento de composición corporal.
+API REST en Go (Gin) con autenticación JWT y PostgreSQL para el seguimiento de composición corporal.
 
 ## Inicio Rápido
 
@@ -37,8 +37,7 @@ Si no se configura, usará una clave de desarrollo (mostrará un warning).
 
 ## Base de Datos
 
-- **Tipo**: SQLite3
-- **Archivo**: `./data.db` (se crea automáticamente)
+// ...existing code...
 - **Tablas**: `users` y `histories`
 
 ## Notas de Seguridad

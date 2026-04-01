@@ -7,6 +7,7 @@ function HealthProfileForm({ onClose, onSave }) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [profile, setProfile] = useState({
     age: '',
     sex: '',
@@ -53,11 +54,24 @@ function HealthProfileForm({ onClose, onSave }) {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setFieldErrors({});
+
+    // Validaciones
+    const newErrors = {};
+    if (!profile.age || isNaN(profile.age) || profile.age < 1 || profile.age > 120) newErrors.age = 'Edad inválida';
+    if (!profile.sex) newErrors.sex = 'Campo requerido';
+    if (!profile.height || isNaN(profile.height) || profile.height < 50 || profile.height > 300) newErrors.height = 'Altura inválida';
+    if (!profile.current_weight || isNaN(profile.current_weight) || profile.current_weight < 20 || profile.current_weight > 400) newErrors.current_weight = 'Peso inválido';
+    if (profile.goal_weight && (isNaN(profile.goal_weight) || profile.goal_weight < 20 || profile.goal_weight > 400)) newErrors.goal_weight = 'Peso objetivo inválido';
+    if (Object.keys(newErrors).length > 0) {
+      setFieldErrors(newErrors);
+      setLoading(false);
+      setError('Por favor corrige los campos marcados.');
+      return;
+    }
 
     try {
       const isUpdate = profile.id;
-
-      // Convert empty strings to appropriate types
       const cleanedProfile = {
         ...profile,
         age: profile.age ? parseInt(profile.age) : 0,
@@ -112,32 +126,37 @@ function HealthProfileForm({ onClose, onSave }) {
             <h3>{t('basicData')}</h3>
             <div className="form-grid">
               <div className="form-group">
-                <label>{t('age')} *</label>
-                <input type="number" name="age" value={profile.age} onChange={handleChange} required />
+                <label htmlFor="age-input">{t('age')} *</label>
+                <input id="age-input" type="number" name="age" value={profile.age} onChange={handleChange} required className={fieldErrors.age ? 'input-error' : ''} />
+                {fieldErrors.age && <span className="error-text">{fieldErrors.age}</span>}
               </div>
               <div className="form-group">
-                <label>{t('sex')} *</label>
-                <select name="sex" value={profile.sex} onChange={handleChange} required>
+                <label htmlFor="sex-input">{t('sex')} *</label>
+                <select id="sex-input" name="sex" value={profile.sex} onChange={handleChange} required className={fieldErrors.sex ? 'input-error' : ''}>
                   <option value="">{t('select')}</option>
                   <option value="male">{t('male')}</option>
                   <option value="female">{t('female')}</option>
                 </select>
+                {fieldErrors.sex && <span className="error-text">{fieldErrors.sex}</span>}
               </div>
               <div className="form-group">
-                <label>{t('height')} (cm) *</label>
-                <input type="number" step="0.1" name="height" value={profile.height} onChange={handleChange} required />
+                <label htmlFor="height-input">{t('height')} (cm) *</label>
+                <input id="height-input" type="number" step="0.1" name="height" value={profile.height} onChange={handleChange} required className={fieldErrors.height ? 'input-error' : ''} />
+                {fieldErrors.height && <span className="error-text">{fieldErrors.height}</span>}
               </div>
               <div className="form-group">
-                <label>{t('currentWeight')} (kg) *</label>
-                <input type="number" step="0.1" name="current_weight" value={profile.current_weight} onChange={handleChange} required />
+                <label htmlFor="current-weight-input">{t('currentWeight')} (kg) *</label>
+                <input id="current-weight-input" type="number" step="0.1" name="current_weight" value={profile.current_weight} onChange={handleChange} required className={fieldErrors.current_weight ? 'input-error' : ''} />
+                {fieldErrors.current_weight && <span className="error-text">{fieldErrors.current_weight}</span>}
               </div>
               <div className="form-group">
-                <label>{t('goalWeight')} (kg)</label>
-                <input type="number" step="0.1" name="goal_weight" value={profile.goal_weight} onChange={handleChange} />
+                <label htmlFor="goal-weight-input">{t('goalWeight')} (kg)</label>
+                <input id="goal-weight-input" type="number" step="0.1" name="goal_weight" value={profile.goal_weight} onChange={handleChange} className={fieldErrors.goal_weight ? 'input-error' : ''} />
+                {fieldErrors.goal_weight && <span className="error-text">{fieldErrors.goal_weight}</span>}
               </div>
               <div className="form-group">
-                <label>{t('waistCircumference')} (cm)</label>
-                <input type="number" step="0.1" name="waist_circumference" value={profile.waist_circumference} onChange={handleChange} />
+                <label htmlFor="waist-circumference-input">{t('waistCircumference')} (cm)</label>
+                <input id="waist-circumference-input" type="number" step="0.1" name="waist_circumference" value={profile.waist_circumference} onChange={handleChange} />
               </div>
             </div>
           </section>

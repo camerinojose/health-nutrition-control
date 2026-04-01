@@ -2,6 +2,17 @@ import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import './gemini.css';
 
+// Utility to list available Gemini models
+async function listGeminiModels(apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to list models: ${response.status} ${response.statusText}`);
+  }
+  const data = await response.json();
+  return data.models || [];
+}
+
 const GeminiChat = ({ onNavigate, profile }) => {
   const [messages, setMessages] = useState([
     {
@@ -23,10 +34,43 @@ const GeminiChat = ({ onNavigate, profile }) => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+    // List available Gemini models on mount
+    async function fetchModels() {
+      try {
+        const models = await listGeminiModels(apiKey);
+        console.log('Available Gemini models:', models);
+      } catch (err) {
+        console.error('Error listing Gemini models:', err);
+      }
+    }
+    if (apiKey) fetchModels();
+  }, [messages, apiKey]);
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
+    // Limitar a 5 mensajes por sesión
+    if (messages.filter(m => m.sender === 'user').length >= 5) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 2).toString(),
+          text: 'Has alcanzado el límite de mensajes gratuitos por sesión. Intenta más tarde.',
+          sender: 'bot',
+          timestamp: new Date(),
+        },
+      ]);
+      setLoading(false);
+      return;
+    }
+    // Evitar mensajes repetidos consecutivos
+    if (
+      messages.length > 0 &&
+      messages[messages.length - 1].text === inputText &&
+      messages[messages.length - 1].sender === 'user'
+    ) {
+      setLoading(false);
+      return;
+    }
 
     const userMessage = {
       id: Date.now().toString(),
@@ -40,7 +84,9 @@ const GeminiChat = ({ onNavigate, profile }) => {
     setLoading(true);
 
     try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+      // Use a supported Gemini model name
+      const model = genAI.getGenerativeModel({ model: 'models/gemini-2.5-pro' });
+      // or try 'models/gemini-pro-latest' if you want the latest stable
 
       const systemPrompt = `Eres un asistente de nutrición amigable y experto. Ayudas a los usuarios con:
 - Consejos de nutrición y alimentación saludable

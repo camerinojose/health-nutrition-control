@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "405b1eda-9dc7-4379-8622-dda0bdd9c589"
+      }
+    },
+    "android": {
+      "package": "com.camerinojose.github"
+    }
+  }
+}

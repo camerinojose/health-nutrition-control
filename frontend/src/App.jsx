@@ -29,11 +29,13 @@ import { initNotifications, requestNotificationPermission, scheduleMealReminders
 export default function App(){
   const { t, i18n } = useTranslation()
   const [token, setToken] = useState(getToken())
-  const [view, setView] = useState('home') // home | login | register | choose-nutritionist | book-appointment | profile | diet | progress | achievements | recipes | products | messages | appointments | support
+  // Set initial view: if token exists, go to home/dashboard, else show landing
+  const [view, setView] = useState(getToken() ? 'home' : 'landing')
   const [profile, setProfile] = useState(null)
   const [language, setLanguage] = useState(i18n.language)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [notificationsEnabled, setNotificationsEnabled] = useState(false)
+  const [loadingProfile, setLoadingProfile] = useState(!!getToken())
 
   // Fallback display name if profile.name is empty
   const displayName = profile?.name || profile?.email || 'Usuario'
@@ -92,6 +94,7 @@ export default function App(){
         // Save token and clear URL
         setToken(oauthToken);
         saveToken(oauthToken);
+        setView('home'); // Ensure dashboard is shown after Google login
         window.history.replaceState({}, document.title, '/');
       } catch (e) {
         console.error('Error saving token to localStorage:', e);
@@ -106,16 +109,27 @@ export default function App(){
     
     // Listen for storage changes from OAuth popup
     const handleStorageChange = (e) => {
-      if (e.key === TOKEN_KEY && e.newValue) {
-        setToken(e.newValue);
-        const claims = decodeTokenClaims(e.newValue)
-        if (claims) {
-          setProfile(prev => prev || {
-            user_id: claims.user_id,
-            name: claims.name,
-            email: claims.email,
-            role: claims.role,
-          })
+      if (e.key === TOKEN_KEY) {
+        if (e.newValue) {
+          setToken(e.newValue);
+          const claims = decodeTokenClaims(e.newValue);
+          if (claims) {
+            setProfile(prev => prev || {
+              user_id: claims.user_id,
+              name: claims.name,
+              email: claims.email,
+              role: claims.role,
+              picture: claims.picture,
+              given_name: claims.given_name,
+              family_name: claims.family_name,
+              locale: claims.locale,
+            });
+          }
+        } else {
+          // Token was removed (logout in another tab or window)
+          setToken(null);
+          setProfile(null);
+          setView('landing');
         }
       }
     };
@@ -138,6 +152,10 @@ export default function App(){
             name: claims.name,
             email: claims.email,
             role: claims.role,
+            picture: claims.picture,
+            given_name: claims.given_name,
+            family_name: claims.family_name,
+            locale: claims.locale,
           })
         }
         fetchProfile();
@@ -155,6 +173,7 @@ export default function App(){
 
   useEffect(()=>{
     if(token){
+      setLoadingProfile(true);
       console.log('[App] Token detected, fetching profile...');
       // Try to fetch profile from API
       fetchProfile()
@@ -171,6 +190,10 @@ export default function App(){
               name: claims.name,
               email: claims.email,
               role: claims.role,
+              picture: claims.picture,
+              given_name: claims.given_name,
+              family_name: claims.family_name,
+              locale: claims.locale,
             }
           }
           return prev
@@ -199,6 +222,10 @@ export default function App(){
             name: claims.name,
             email: claims.email,
             role: claims.role,
+            picture: claims.picture,
+            given_name: claims.given_name,
+            family_name: claims.family_name,
+            locale: claims.locale,
           })
         }
       } else {
@@ -220,9 +247,15 @@ export default function App(){
             name: claims.name,
             email: claims.email,
             role: claims.role,
+            picture: claims.picture,
+            given_name: claims.given_name,
+            family_name: claims.family_name,
+            locale: claims.locale,
           })
         }
       }
+    } finally {
+      setLoadingProfile(false);
     }
   }
 
@@ -230,7 +263,7 @@ export default function App(){
     clearToken()
     setToken(null)
     setProfile(null)
-    setView('home')
+    setView('landing') // Redirect to landing page after logout
   }
 
   return (
@@ -286,7 +319,14 @@ export default function App(){
       <main>
         {!isCallback && (
         <>
-        {!token && view !== 'login' && view !== 'register' && (
+        {/* Show loading spinner if token exists and profile is loading */}
+        {loadingProfile && token && (
+          <div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'60vh'}}>
+            <div className="spinner" style={{width:48,height:48,border:'6px solid #eee',borderTop:'6px solid #6c63ff',borderRadius:'50%',animation:'spin 1s linear infinite'}}></div>
+          </div>
+        )}
+        {/* Show landing page only if not logged in and not loading */}
+        {!token && view === 'landing' && !loadingProfile && (
           <div className="home-landing">
             <div className="hero-section">
               <div className="hero-overlay">
@@ -347,7 +387,7 @@ export default function App(){
         {view === 'login' && <Login onLogin={(tkn)=>{ setToken(tkn); setView('home') }} onSwitchToRegister={()=>setView('register')} />}
         {view === 'register' && <Register onRegistered={()=>{ setView('login') }} onSwitchToLogin={()=>setView('login')} />}
         
-        {token && profile && (
+        {token && profile && !loadingProfile && (
           <>
             {view === 'home' && (
               profile.role === 'nutritionist' || profile.role === 'admin' 

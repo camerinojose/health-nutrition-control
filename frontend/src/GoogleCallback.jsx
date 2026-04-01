@@ -12,27 +12,12 @@ export default function GoogleCallback() {
       // Save token to localStorage
       saveToken(token);
       
-      // Notify parent window (if opened from popup)
+      // Notify parent window (if opened from popup) and close immediately
       if (window.opener) {
-        // Set in parent's localStorage
-        try {
-          window.opener.localStorage.setItem(TOKEN_KEY, token);
-          // Dispatch storage event in parent window
-          window.opener.dispatchEvent(new StorageEvent('storage', {
-            key: TOKEN_KEY,
-            newValue: token,
-            oldValue: null,
-            storageArea: window.opener.localStorage
-          }));
-        } catch (e) {
-          console.error('Error setting token in parent:', e);
-        }
-      }
-      
-      // Auto-close after 500ms
-      setTimeout(() => {
+        window.opener.postMessage({ type: 'oauth-token', token }, '*');
         window.close();
-      }, 500);
+      }
+      // If not opened from popup, just stay and show message
     } else if (error) {
       alert('Error: ' + error);
       if (window.opener) {

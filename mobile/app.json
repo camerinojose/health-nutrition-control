@@ -22,7 +22,25 @@
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
       ],
-      "useNextNotificationsApi": true
+      "useNextNotificationsApi": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": {
+            "scheme": "exp",
+            "host": "192.168.100.27",
+            "pathPrefix": "/--/oauth-callback"
+          },
+          "category": ["BROWSABLE", "DEFAULT"]
+        },
+        {
+          "action": "VIEW",
+          "data": {
+            "scheme": "com.bienestarappmobile"
+          },
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "notification": {
       "icon": "./assets/Logo_p_bienestar.png",
@@ -39,6 +57,12 @@
           "sounds": []
         }
       ]
-    ]
+    ],
+    "extra": {
+      "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyDqSJeMrcbX4-tosZchFm-Vbz0jih6gJu0",
+      "eas": {
+        "projectId": "128cbc0f-4c59-41cb-9159-fde7782f3810"
+      }
+    }
   }
 }

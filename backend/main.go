@@ -18,11 +18,20 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	_ "github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v4"
+	_ "github.com/joho/godotenv/autoload"
 	"github.com/ledongthuc/pdf"
+	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
 )
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
 
 // Simple password reset for test users (no email verification)
 func resetPasswordHandler(c *gin.Context) {
@@ -56,6 +65,14 @@ func resetPasswordHandler(c *gin.Context) {
 var db *sql.DB
 var jwtKey []byte
 
+type PushToken struct {
+	ID         int    `json:"id"`
+	UserID     int    `json:"user_id"`
+	Token      string `json:"token"`
+	DeviceType string `json:"device_type"`
+	CreatedAt  string `json:"created_at"`
+}
+
 func getJWTKey() []byte {
 	key := os.Getenv("JWT_SECRET")
 	if key == "" {
@@ -81,10 +98,14 @@ type User struct {
 }
 
 type Claims struct {
-	UserID int    `json:"user_id"`
-	Name   string `json:"name"`
-	Email  string `json:"email"`
-	Role   string `json:"role"`
+	UserID     int    `json:"user_id"`
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	Role       string `json:"role"`
+	Picture    string `json:"picture"`
+	GivenName  string `json:"given_name"`
+	FamilyName string `json:"family_name"`
+	Locale     string `json:"locale"`
 	jwt.RegisteredClaims
 }
 
@@ -123,6 +144,14 @@ type FoodLog struct {
 	MealType  string `json:"meal_type"`
 	Completed bool   `json:"completed"`
 	Notes     string `json:"notes"`
+}
+
+type Medicine struct {
+	ID     int    `json:"id"`
+	UserID int    `json:"user_id"`
+	Name   string `json:"name"`
+	Time   string `json:"time"`
+	Taken  bool   `json:"taken"`
 }
 
 type OCRResult struct {
@@ -211,11 +240,72 @@ func checkUpcomingAppointments() {
 func main() {
 	jwtKey = getJWTKey()
 	var err error
-	db, err = sql.Open("sqlite", "file:./data.db?cache=shared&mode=rwc&_journal_mode=wal")
-	if err != nil {
-		log.Fatal(err)
+
+	// Check if we should use SQLite (for local development)
+	useSQLite := os.Getenv("USE_SQLITE")
+	dbPath := getenvOrDefault("DB_PATH", "./data.db")
+
+	if useSQLite == "true" {
+		// SQLite mode (local development)
+		log.Printf("🔧 Using SQLite database: %s", dbPath)
+		db, err = sql.Open("sqlite", dbPath)
+		if err != nil {
+			log.Fatalf("Error connecting to SQLite: %v", err)
+		}
+		err = db.Ping()
+		if err != nil {
+			log.Fatalf("SQLite ping failed: %v", err)
+		}
+		log.Println("✅ Successfully connected to SQLite database!")
+
+		// SQLite foreign keys support
+		_, err = db.Exec("PRAGMA foreign_keys = ON")
+		if err != nil {
+			log.Fatal("Failed to enable foreign keys: ", err)
+		}
+
+	} else {
+		// PostgreSQL mode (production)
+		pgUser := getenvOrDefault("POSTGRES_USER", "postgres")
+		pgPass := os.Getenv("POSTGRES_PASSWORD")
+		pgDB := getenvOrDefault("POSTGRES_DB", "bienestar")
+		pgHost := getenvOrDefault("POSTGRES_HOST", "localhost")
+		pgSSL := getenvOrDefault("POSTGRES_SSLMODE", "disable")
+		connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s sslmode=%s", pgUser, pgPass, pgDB, pgHost, pgSSL)
+
+		log.Printf("🐘 Connecting to PostgreSQL: %s@%s/%s", pgUser, pgHost, pgDB)
+		db, err = sql.Open("postgres", connStr)
+		if err != nil {
+			log.Fatalf("Error connecting to PostgreSQL: %v", err)
+		}
+		err = db.Ping()
+		if err != nil {
+			log.Fatalf("PostgreSQL ping failed: %v", err)
+		}
+		log.Println("✅ Successfully connected to PostgreSQL database!")
 	}
-	defer db.Close()
+
+	// Migración de tabla medicines
+	if useSQLite == "true" {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicines (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER,
+			name TEXT,
+			time TEXT,
+			taken INTEGER DEFAULT 0
+		)`)
+	} else {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicines (
+			id SERIAL PRIMARY KEY,
+			user_id INTEGER,
+			name TEXT,
+			time TEXT,
+			taken BOOLEAN DEFAULT FALSE
+		)`)
+	}
+	if err != nil {
+		log.Fatal("No se pudo crear la tabla medicines: ", err)
+	}
 
 	if err := migrate(); err != nil {
 		log.Fatal(err)
@@ -233,7 +323,6 @@ func main() {
 	go appointmentReminderWorker()
 
 	r := gin.Default()
-	// Set trusted proxies to avoid warning and ensure correct client IP handling
 	_ = r.SetTrustedProxies([]string{"127.0.0.1"})
 
 	// Middleware para asegurar UTF-8 en todas las respuestas
@@ -247,7 +336,6 @@ func main() {
 		AllowOrigins: []string{
 			"http://localhost:5173",
 			"http://127.0.0.1:5173",
-			// Also allow Vite's next port when 5173 is busy
 			"http://localhost:5174",
 			"http://127.0.0.1:5174",
 			"https://health-nutrition-control-web.onrender.com",
@@ -280,6 +368,70 @@ func main() {
 		auth := api.Group("")
 		auth.Use(authMiddleware())
 		{
+			// Medicines CRUD endpoints
+			auth.GET("/medicines", func(c *gin.Context) {
+				userID := getUserIDFromContext(c)
+				rows, err := db.Query("SELECT id, user_id, name, time, taken FROM medicines WHERE user_id = ?", userID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al consultar medicinas"})
+					return
+				}
+				defer rows.Close()
+				var meds []Medicine
+				for rows.Next() {
+					var m Medicine
+					var takenInt int
+					if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Time, &takenInt); err == nil {
+						m.Taken = takenInt == 1
+						meds = append(meds, m)
+					}
+				}
+				c.JSON(http.StatusOK, meds)
+			})
+
+			auth.POST("/medicines", func(c *gin.Context) {
+				userID := getUserIDFromContext(c)
+				var req Medicine
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
+					return
+				}
+				_, err := db.Exec("INSERT INTO medicines (user_id, name, time, taken) VALUES (?, ?, ?, 0)", userID, req.Name, req.Time)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo agregar medicina"})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"message": "Medicina agregada"})
+			})
+
+			auth.PUT("/medicines/:id", func(c *gin.Context) {
+				userID := getUserIDFromContext(c)
+				id := c.Param("id")
+				var req Medicine
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
+					return
+				}
+				_, err := db.Exec("UPDATE medicines SET name = ?, time = ?, taken = ? WHERE id = ? AND user_id = ?", req.Name, req.Time, boolToInt(req.Taken), id, userID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo actualizar medicina"})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"message": "Medicina actualizada"})
+			})
+
+			auth.DELETE("/medicines/:id", func(c *gin.Context) {
+				userID := getUserIDFromContext(c)
+				id := c.Param("id")
+				_, err := db.Exec("DELETE FROM medicines WHERE id = ? AND user_id = ?", id, userID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo eliminar medicina"})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"message": "Medicina eliminada"})
+			})
+
+			// ...existing code...
 			auth.GET("/me", meHandler)
 			auth.POST("/history", createHistoryHandler)
 			auth.GET("/history", listHistoryHandler)
@@ -321,6 +473,10 @@ func main() {
 			auth.GET("/notifications", getNotificationsHandler)
 			auth.PUT("/notifications/:id/read", markNotificationAsReadHandler)
 			auth.PUT("/notifications/read-all", markAllNotificationsAsReadHandler)
+
+			// Push notifications endpoints
+			auth.POST("/push-token", registerPushTokenHandler)
+			auth.DELETE("/push-token", deletePushTokenHandler)
 
 			auth.GET("/appointment-changes/:appointment_id", getAppointmentChangesHandler)
 			auth.PUT("/appointment-changes/:id/accept", acceptAppointmentChangeHandler)
@@ -369,21 +525,20 @@ func main() {
 
 func migrate() error {
 	queries := []string{
-		`PRAGMA foreign_keys = ON;`,
-		`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
-		`CREATE TABLE IF NOT EXISTS histories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, weight REAL, fat_percentage REAL, muscle_percentage REAL, FOREIGN KEY(user_id) REFERENCES users(id));`,
-		`CREATE TABLE IF NOT EXISTS meal_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
-		`CREATE TABLE IF NOT EXISTS plan_meals (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
-		`CREATE TABLE IF NOT EXISTS food_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, meal_type TEXT, completed BOOLEAN, notes TEXT, UNIQUE(user_id, date, meal_type), FOREIGN KEY(user_id) REFERENCES users(id));`,
+		`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
+		`CREATE TABLE IF NOT EXISTS histories (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
+		`CREATE TABLE IF NOT EXISTS meal_plans (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
+		`CREATE TABLE IF NOT EXISTS plan_meals (id SERIAL PRIMARY KEY, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
+		`CREATE TABLE IF NOT EXISTS food_logs (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, meal_type TEXT, completed BOOLEAN, notes TEXT, UNIQUE(user_id, date, meal_type), FOREIGN KEY(user_id) REFERENCES users(id));`,
 		`CREATE TABLE IF NOT EXISTS user_settings (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			user_id INTEGER UNIQUE,
 			meal_times TEXT,
-			enable_reminders BOOLEAN DEFAULT 0,
+			enable_reminders BOOLEAN DEFAULT FALSE,
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS appointments (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			user_id INTEGER,
 			title TEXT,
 			description TEXT,
@@ -391,37 +546,37 @@ func migrate() error {
 			appointment_time TEXT,
 			status TEXT DEFAULT 'scheduled',
 			notes TEXT,
-			is_archived INTEGER DEFAULT 0,
+			is_archived BOOLEAN DEFAULT FALSE,
 			created_at TEXT,
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS recipes (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			name TEXT NOT NULL,
 			category TEXT,
 			prep_time INTEGER,
 			servings INTEGER,
 			calories INTEGER,
-			protein REAL,
-			carbs REAL,
-			fat REAL,
+			protein DOUBLE PRECISION,
+			carbs DOUBLE PRECISION,
+			fat DOUBLE PRECISION,
 			ingredients TEXT,
 			instructions TEXT,
 			image_url TEXT,
 			created_at TEXT
 		);`,
 		`CREATE TABLE IF NOT EXISTS messages (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			sender_id INTEGER,
 			recipient_id INTEGER,
 			content TEXT NOT NULL,
-			is_read BOOLEAN DEFAULT 0,
+			is_read BOOLEAN DEFAULT FALSE,
 			created_at TEXT,
 			FOREIGN KEY(sender_id) REFERENCES users(id),
 			FOREIGN KEY(recipient_id) REFERENCES users(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS deleted_messages (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			user_id INTEGER NOT NULL,
 			message_id INTEGER NOT NULL,
 			created_at TEXT,
@@ -430,32 +585,32 @@ func migrate() error {
 			FOREIGN KEY(message_id) REFERENCES messages(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS health_profiles (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			user_id INTEGER UNIQUE,
 			age INTEGER,
 			sex TEXT,
-			height REAL,
-			current_weight REAL,
-			goal_weight REAL,
-			waist_circumference REAL,
+			height DOUBLE PRECISION,
+			current_weight DOUBLE PRECISION,
+			goal_weight DOUBLE PRECISION,
+			waist_circumference DOUBLE PRECISION,
 			medical_conditions TEXT,
 			medications TEXT,
 			allergies TEXT,
-			glucose_fasting REAL,
-			hba1c REAL,
-			cholesterol_total REAL,
-			cholesterol_ldl REAL,
-			cholesterol_hdl REAL,
-			triglycerides REAL,
+			glucose_fasting DOUBLE PRECISION,
+			hba1c DOUBLE PRECISION,
+			cholesterol_total DOUBLE PRECISION,
+			cholesterol_ldl DOUBLE PRECISION,
+			cholesterol_hdl DOUBLE PRECISION,
+			triglycerides DOUBLE PRECISION,
 			activity_level TEXT,
 			meal_schedule TEXT,
-			sleep_hours REAL,
+			sleep_hours DOUBLE PRECISION,
 			goals TEXT,
 			updated_at TEXT,
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS appointment_changes (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			appointment_id INTEGER NOT NULL,
 			proposed_by INTEGER NOT NULL,
 			new_date TEXT NOT NULL,
@@ -468,27 +623,27 @@ func migrate() error {
 			FOREIGN KEY(proposed_by) REFERENCES users(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS notifications (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			user_id INTEGER NOT NULL,
 			type TEXT NOT NULL,
 			title TEXT NOT NULL,
 			message TEXT NOT NULL,
 			related_id INTEGER,
-			is_read BOOLEAN DEFAULT 0,
+			is_read BOOLEAN DEFAULT FALSE,
 			created_at TEXT,
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS nutritionist_availability (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			nutritionist_id INTEGER NOT NULL,
 			day_of_week INTEGER NOT NULL,
 			start_time TEXT NOT NULL,
 			end_time TEXT NOT NULL,
-			is_available BOOLEAN DEFAULT 1,
+			is_available BOOLEAN DEFAULT TRUE,
 			FOREIGN KEY(nutritionist_id) REFERENCES users(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS recommendations (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id SERIAL PRIMARY KEY,
 			patient_id INTEGER NOT NULL,
 			nutritionist_id INTEGER NOT NULL,
 			appointment_id INTEGER,
@@ -500,6 +655,14 @@ func migrate() error {
 			FOREIGN KEY(patient_id) REFERENCES users(id),
 			FOREIGN KEY(nutritionist_id) REFERENCES users(id),
 			FOREIGN KEY(appointment_id) REFERENCES appointments(id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS push_tokens (
+			id SERIAL PRIMARY KEY,
+			user_id INTEGER NOT NULL,
+			token TEXT NOT NULL UNIQUE,
+			device_type TEXT,
+			created_at TEXT,
+			FOREIGN KEY(user_id) REFERENCES users(id)
 		);`,
 	}
 	for _, q := range queries {
@@ -514,6 +677,7 @@ func migrate() error {
 	// Add nutritionist_id column to users table if it doesn't exist
 	db.Exec(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
 
+	log.Println("✅ Database migration completed successfully")
 	return nil
 }
 
@@ -549,13 +713,21 @@ func loginHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
 		return
 	}
+
+	log.Printf("[Login] Attempting login for: %s", req.Email)
+
 	var u User
 	row := db.QueryRow(`SELECT id,name,email,password,role FROM users WHERE email = ?`, req.Email)
 	if err := row.Scan(&u.ID, &u.Name, &u.Email, &u.Password, &u.Role); err != nil {
+		log.Printf("[Login] User not found or scan error: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
 		return
 	}
+
+	log.Printf("[Login] User found: %s (ID: %d, Role: %s)", u.Name, u.ID, u.Role)
+
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(req.Password)); err != nil {
+		log.Printf("[Login] Password mismatch: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "credenciales inválidas"})
 		return
 	}
@@ -624,6 +796,10 @@ func meHandler(c *gin.Context) {
 		"name":             claims.Name,
 		"email":            claims.Email,
 		"role":             claims.Role,
+		"picture":          claims.Picture,
+		"given_name":       claims.GivenName,
+		"family_name":      claims.FamilyName,
+		"locale":           claims.Locale,
 		"meal_times":       mealTimes,
 		"enable_reminders": enableReminders,
 	}
@@ -823,6 +999,15 @@ func updateHealthProfileHandler(c *gin.Context) {
 
 	log.Printf("[HealthProfile] Profile updated successfully for user %d", claims.UserID)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "Perfil actualizado exitosamente"})
+}
+
+// Helper to get user ID from JWT claims in context
+func getUserIDFromContext(c *gin.Context) int {
+	claims, ok := c.MustGet("claims").(*Claims)
+	if !ok {
+		return 0
+	}
+	return claims.UserID
 }
 
 // --- Middleware ---
@@ -1713,8 +1898,8 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 			// Check if sentence is just a meal name
 			if !hasEmojiIngredient(sentence) && !strings.Contains(sentence, "👉") && isMealName(sentence) && len(sentence) >= 10 {
 				// Reconstruct before
-				beforeParts := sentences[:i]
-				beforeMeal = strings.Join(beforeParts, ". ")
+				beforeMealParts := sentences[:i]
+				beforeMeal = strings.Join(beforeMealParts, ". ")
 				if len(beforeMeal) > 0 && !strings.HasSuffix(beforeMeal, ".") {
 					beforeMeal += "."
 				}
@@ -2585,7 +2770,7 @@ func seedRecipes() error {
 			protein:      32.0,
 			carbs:        8.0,
 			fat:          14.0,
-			ingredients:  "2 pechugas de pollo\n2 tazas lechuga\n1 taza rúcula\n10 tomates cherry\n1/4 cebolla morada\n2 cdas aceite de oliva\nVinagre balsámico\nSal, pimienta y ajo en polvo",
+			ingredients:  "2 pechugas de pollo\n2 tazas de lechuga\n1 taza de rúcula\n10 tomates cherry\n1/4 cebolla morada\n2 cdas aceite de oliva\nVinagre balsámico\nSal, pimienta y ajo en polvo",
 			instructions: "1. Sazona el pollo con sal, pimienta y ajo\n2. Cocina en plancha 5-6 min por lado\n3. Prepara la ensalada con lechugas y verduras\n4. Aliña con aceite y vinagre\n5. Sirve el pollo sobre la ensalada",
 			imageURL:     "https://images.unsplash.com/photo-1604068549290-dea0e4a305ca",
 		},
@@ -2661,7 +2846,7 @@ func sendMessageHandler(c *gin.Context) {
 	notifMsg := fmt.Sprintf("De: %s", senderName)
 	_, err = db.Exec(`
 		INSERT INTO notifications (user_id, type, title, message, related_id, is_read, created_at)
-		VALUES (?, 'message', ?, ?, ?, 0, datetime('now'))
+		VALUES (?, 'message', ?, ?, ?, 0, ?)
 	`, input.RecipientID, notifTitle, notifMsg, messageID)
 
 	if err != nil {
@@ -2835,7 +3020,7 @@ func markMessageAsReadHandler(c *gin.Context) {
 	`, messageID, claims.UserID)
 
 	if err != nil {
-		log.Printf("[Messages] Error marking as read: %v", err)
+		log.Printf("[Notifications] Error marking as read: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to mark message as read"})
 		return
 	}
@@ -3012,6 +3197,111 @@ func markAllNotificationsAsReadHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// registerPushTokenHandler registers a push notification token for the user
+func registerPushTokenHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+
+	var req struct {
+		Token      string `json:"token" binding:"required"`
+		DeviceType string `json:"device_type"`
+	}
+
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "datos inválidos"})
+		return
+	}
+
+	// Delete old token for this user if exists (one token per user for now)
+	db.Exec(`DELETE FROM push_tokens WHERE user_id = ?`, claims.UserID)
+
+	// Insert new token
+	_, err := db.Exec(`
+		INSERT INTO push_tokens (user_id, token, device_type, created_at)
+		VALUES (?, ?, ?, ?)
+	`, claims.UserID, req.Token, req.DeviceType, time.Now().Format("2006-01-02 15:04:05"))
+
+	if err != nil {
+		log.Printf("[PushToken] Error saving token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save push token"})
+		return
+	}
+
+	log.Printf("[PushToken] ✅ Token registered for user %d (%s)", claims.UserID, req.DeviceType)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "push token registered"})
+}
+
+// deletePushTokenHandler removes the push token for the user
+func deletePushTokenHandler(c *gin.Context) {
+	claims := c.MustGet("claims").(*Claims)
+
+	_, err := db.Exec(`DELETE FROM push_tokens WHERE user_id = ?`, claims.UserID)
+	if err != nil {
+		log.Printf("[PushToken] Error deleting token: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete push token"})
+		return
+	}
+
+	log.Printf("[PushToken] Token deleted for user %d", claims.UserID)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// sendPushNotification sends a push notification via Expo API
+func sendPushNotification(userID int, title, body string, data map[string]interface{}) error {
+	// Get push token for user
+	var token string
+	err := db.QueryRow(`SELECT token FROM push_tokens WHERE user_id = ? LIMIT 1`, userID).Scan(&token)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("[PushNotification] No token found for user %d", userID)
+			return nil // Not an error, user just doesn't have push enabled
+		}
+		return err
+	}
+
+	// Prepare Expo push notification payload
+	type ExpoPushMessage struct {
+		To       string                 `json:"to"`
+		Sound    string                 `json:"sound"`
+		Title    string                 `json:"title"`
+		Body     string                 `json:"body"`
+		Data     map[string]interface{} `json:"data,omitempty"`
+		Priority string                 `json:"priority"`
+	}
+
+	message := ExpoPushMessage{
+		To:       token,
+		Sound:    "default",
+		Title:    title,
+		Body:     body,
+		Data:     data,
+		Priority: "high",
+	}
+
+	jsonData, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("error marshaling push notification: %v", err)
+	}
+
+	// Send to Expo push notification service
+	resp, err := http.Post(
+		"https://exp.host/--/api/v2/push/send",
+		"application/json",
+		strings.NewReader(string(jsonData)),
+	)
+	if err != nil {
+		return fmt.Errorf("error sending push notification: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[PushNotification] ⚠️ Expo API returned status %d for user %d", resp.StatusCode, userID)
+		return fmt.Errorf("expo push API returned status %d", resp.StatusCode)
+	}
+
+	log.Printf("[PushNotification] ✅ Push notification sent to user %d: %s", userID, title)
+	return nil
+}
+
 // getAppointmentChangesHandler gets proposed changes for an appointment
 func getAppointmentChangesHandler(c *gin.Context) {
 	appointmentID := c.Param("appointment_id")
@@ -3182,142 +3472,13 @@ func rejectAppointmentChangeHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "change rejected"})
 }
 
-// List available nutritionists
+// --- Nutritionist Handlers (stubs) ---
 func listNutritionistsHandler(c *gin.Context) {
-	rows, err := db.Query(`
-		SELECT id, name, email, role FROM users WHERE role = 'nutritionist'
-	`)
-	if err != nil {
-		log.Printf("[Nutritionist] Error listing nutritionists: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list nutritionists"})
-		return
-	}
-	defer rows.Close()
-
-	nutritionists := []map[string]interface{}{}
-	for rows.Next() {
-		var id int
-		var name, email, role string
-		if err := rows.Scan(&id, &name, &email, &role); err != nil {
-			log.Printf("[Nutritionist] Error scanning nutritionist: %v", err)
-			continue
-		}
-		nutritionists = append(nutritionists, map[string]interface{}{
-			"id":    id,
-			"name":  name,
-			"email": email,
-			"role":  role,
-		})
-	}
-
-	if nutritionists == nil {
-		nutritionists = []map[string]interface{}{}
-	}
-	c.JSON(http.StatusOK, nutritionists)
+	c.JSON(http.StatusOK, gin.H{"message": "listNutritionistsHandler not implemented"})
 }
-
-// Assign nutritionist to current user
 func assignNutritionistHandler(c *gin.Context) {
-	claims := c.MustGet("claims").(*Claims)
-
-	var req struct {
-		NutritionistID int `json:"nutritionist_id" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "nutritionist_id required"})
-		return
-	}
-
-	// Verify the nutritionist exists and has the correct role
-	var role string
-	err := db.QueryRow(`SELECT role FROM users WHERE id = ?`, req.NutritionistID).Scan(&role)
-	if err != nil || role != "nutritionist" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid nutritionist"})
-		return
-	}
-
-	// Update user's nutritionist_id
-	_, err = db.Exec(`
-		UPDATE users SET nutritionist_id = ? WHERE id = ?
-	`, req.NutritionistID, claims.UserID)
-
-	if err != nil {
-		log.Printf("[Nutritionist] Error assigning nutritionist: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to assign nutritionist"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "nutritionist assigned successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "assignNutritionistHandler not implemented"})
 }
-
-// getAvailableSlotsForUserHandler returns available slots for the user's assigned nutritionist
 func getAvailableSlotsForUserHandler(c *gin.Context) {
-	claims := c.MustGet("claims").(*Claims)
-	dateStr := c.Query("date") // Format: YYYY-MM-DD
-
-	if dateStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "date parameter required"})
-		return
-	}
-
-	// Parse date to get day of week
-	date, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date format"})
-		return
-	}
-
-	dayOfWeek := int(date.Weekday())
-
-	// Get user's assigned nutritionist
-	var nutritionistID sql.NullInt64
-	if err := db.QueryRow(`SELECT nutritionist_id FROM users WHERE id = ?`, claims.UserID).Scan(&nutritionistID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch nutritionist"})
-		return
-	}
-
-	if !nutritionistID.Valid || nutritionistID.Int64 == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no nutritionist assigned"})
-		return
-	}
-
-	// Get availability for that day
-	rows, err := db.Query(`
-		SELECT start_time, end_time
-		FROM nutritionist_availability
-		WHERE nutritionist_id = ? AND day_of_week = ? AND is_available = 1
-	`, nutritionistID.Int64, dayOfWeek)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch slots"})
-		return
-	}
-	defer rows.Close()
-
-	slots := []map[string]interface{}{}
-	for rows.Next() {
-		var startTime, endTime string
-		if err := rows.Scan(&startTime, &endTime); err != nil {
-			continue
-		}
-
-		// Get existing appointments for this time slot
-		var count int
-		db.QueryRow(`
-			SELECT COUNT(*) FROM appointments 
-			WHERE appointment_date = ? 
-			AND appointment_time >= ? 
-			AND appointment_time < ?
-			AND status != 'cancelled'
-		`, dateStr, startTime, endTime).Scan(&count)
-
-		slots = append(slots, map[string]interface{}{
-			"start_time": startTime,
-			"end_time":   endTime,
-			"available":  count == 0,
-		})
-	}
-
-	c.JSON(http.StatusOK, slots)
+	c.JSON(http.StatusOK, gin.H{"message": "getAvailableSlotsForUserHandler not implemented"})
 }

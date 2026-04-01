@@ -11,7 +11,9 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import Constants from 'expo-constants';
 
 const GeminiChatScreen = ({ onNavigate, profile }) => {
   const [messages, setMessages] = useState([
@@ -25,7 +27,8 @@ const GeminiChatScreen = ({ onNavigate, profile }) => {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollViewRef = useRef();
-  const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+  // Use Constants.expoConfig.extra for Expo Go compatibility
+  const apiKey = Constants.expoConfig?.extra?.EXPO_PUBLIC_GEMINI_API_KEY || '';
   const genAI = useRef(new GoogleGenerativeAI(apiKey)).current;
 
   const scrollToBottom = () => {

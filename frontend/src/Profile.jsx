@@ -246,10 +246,27 @@ export default function Profile({ token, profile }) {
       <div className="profile-card">
         <h3>{t('personalInfo') || 'Información Personal'}</h3>
         <div className="info-grid">
+          {profile.picture && (
+            <div className="info-item" style={{ gridColumn: '1 / -1', textAlign: 'center' }}>
+              <img src={profile.picture} alt="Profile" style={{ width: 80, height: 80, borderRadius: '50%' }} />
+            </div>
+          )}
           <div className="info-item">
             <label>{t('name')}:</label>
             <span>{profile.name}</span>
           </div>
+          {profile.given_name && (
+            <div className="info-item">
+              <label>{t('given_name') || 'Nombre(s)'}:</label>
+              <span>{profile.given_name}</span>
+            </div>
+          )}
+          {profile.family_name && (
+            <div className="info-item">
+              <label>{t('family_name') || 'Apellido(s)'}:</label>
+              <span>{profile.family_name}</span>
+            </div>
+          )}
           <div className="info-item">
             <label>{t('email')}:</label>
             <span>{profile.email}</span>
@@ -258,6 +275,12 @@ export default function Profile({ token, profile }) {
             <label>{t('role')}:</label>
             <span className={`role-badge ${profile.role}`}>{profile.role}</span>
           </div>
+          {profile.locale && (
+            <div className="info-item">
+              <label>{t('locale') || 'Idioma'}:</label>
+              <span>{profile.locale}</span>
+            </div>
+          )}
           {healthProfile && (
             <>
               <div className="info-item">

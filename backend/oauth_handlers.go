@@ -334,10 +334,26 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 	email := ""
 	name := ""
 
-	// Extraer email y nombre según el provider
+	// Extraer email y nombre y otros campos según el provider
+	picture := ""
+	givenName := ""
+	familyName := ""
+	locale := ""
 	if provider == "google" {
 		email = userInfo["email"].(string)
 		name = userInfo["name"].(string)
+		if v, ok := userInfo["picture"].(string); ok {
+			picture = v
+		}
+		if v, ok := userInfo["given_name"].(string); ok {
+			givenName = v
+		}
+		if v, ok := userInfo["family_name"].(string); ok {
+			familyName = v
+		}
+		if v, ok := userInfo["locale"].(string); ok {
+			locale = v
+		}
 	} else if provider == "facebook" {
 		if e, ok := userInfo["email"].(string); ok {
 			email = e
@@ -381,10 +397,14 @@ func findOrCreateSocialUser(provider string, userInfo map[string]interface{}) (i
 
 	// Generar JWT token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
-		UserID: userID,
-		Name:   name,
-		Email:  email,
-		Role:   "user",
+		UserID:     userID,
+		Name:       name,
+		Email:      email,
+		Role:       "user",
+		Picture:    picture,
+		GivenName:  givenName,
+		FamilyName: familyName,
+		Locale:     locale,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

@@ -110,9 +110,18 @@ export default function Dashboard({ profile }) {
 
   return (
     <div className="dashboard">
-      <div className="dashboard-header">
-        <h2>👋 {t('welcome')}, {profile.name}!</h2>
-        <p className="dashboard-date">{new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+      <div className="dashboard-header" style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+        {profile.picture && (
+          <img
+            src={profile.picture}
+            alt="User"
+            style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', boxShadow: '0 2px 8px #0002' }}
+          />
+        )}
+        <div>
+          <h2 style={{ margin: 0 }}>👋 {t('welcome')}, {profile.name}!</h2>
+          <p className="dashboard-date" style={{ margin: 0 }}>{new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+        </div>
       </div>
 
       <div className="dashboard-grid">

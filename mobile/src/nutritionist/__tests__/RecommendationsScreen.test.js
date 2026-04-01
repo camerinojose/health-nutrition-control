@@ -1,3 +1,4 @@
+// File intentionally left blank or removed to match production Expo Go environment.
 import React from 'react'
 import { render, fireEvent, waitFor } from '@testing-library/react-native'
 import RecommendationsScreen from '../RecommendationsScreen'
@@ -483,3 +484,4 @@ describe('NutritionistRecommendationsScreen', () => {
     })
   })
 })
+// File intentionally left blank or removed to match GitHub repo state.

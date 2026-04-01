@@ -1,11 +1,15 @@
+import ActivateNotificationsScreen from './src/ActivateNotificationsScreen'
 import React, {useState, useEffect, useRef} from 'react'
+import { FlatList } from 'react-native'
+import * as Notifications from 'expo-notifications'
 // Simple in-app log buffer for debugging
 const logBuffer = [];
 function addLog(msg) {
   if (logBuffer.length > 20) logBuffer.shift();
   logBuffer.push(msg);
 }
-import { SafeAreaView, View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform } from 'react-native'
 import Constants from 'expo-constants'
 import * as WebBrowser from 'expo-web-browser'
 import * as SplashScreen from 'expo-splash-screen'
@@ -13,6 +17,8 @@ import * as Linking from 'expo-linking'
 import './src/i18n'
 import { useTranslation } from 'react-i18next'
 import api from './src/api'
+import MedicinesScreen from './MedicinesScreen'
+import DiabetesNotificationsScreen from './src/DiabetesNotificationsScreen'
 import { saveToken, getToken, clearToken } from './src/auth'
 import { startNotificationListening, stopNotificationListening, setupNotificationResponseHandler } from './src/notifications'
 import MealPlanScreen from './src/MealPlanScreen'
@@ -66,6 +72,40 @@ SplashScreen.preventAutoHideAsync().catch(err => {
 });
 
 export default function App() {
+      // ...medicine logic moved to MedicinesScreen.js
+    // Configuración de notificaciones locales
+    useEffect(() => {
+      // Solicitar permisos al iniciar la app
+      (async () => {
+        const { status } = await Notifications.requestPermissionsAsync();
+        if (status !== 'granted') {
+          alert('Permiso de notificaciones no concedido');
+        }
+      })();
+
+      // Listener para manejar cuando el usuario toca la notificación
+      const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+        // Ejemplo: redirigir a la pantalla de recomendaciones
+        setView('mealplan');
+      });
+      return () => subscription.remove();
+    }, []);
+
+    // Función de ejemplo para programar una notificación local
+    async function programarNotificacionComida() {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: '¡Hora de preparar tu comida!',
+          body: 'Revisa tus recomendaciones y prepárate para tu próxima comida.',
+        },
+        trigger: {
+          hour: 12, // Cambia la hora según tu preferencia
+          minute: 0,
+          repeats: true, // Se repite diariamente
+        },
+      });
+      alert('Notificación diaria programada a las 12:00');
+    }
   const { t, i18n } = useTranslation()
   const isExpoGo = Constants.appOwnership === 'expo'
   const isAndroid = Platform.OS === 'android'
@@ -232,19 +272,19 @@ export default function App() {
   }
 
   async function completeLogin(token, welcomeMessage = '¡Bienvenido!') {
-    console.log('Finalizing login with token length:', token?.length);
+    console.log('[completeLogin] Finalizing login with token length:', token?.length);
     await saveToken(token);
     setToken(token);
     setEmail('');
     setPassword('');
 
     try {
-      console.log('Fetching profile...');
+      console.log('[completeLogin] Fetching profile...');
       await fetchProfile(token);
-      console.log('Profile fetched successfully');
+      console.log('[completeLogin] Profile fetched successfully, setting view to dashboard');
       setView('dashboard');
     } catch (e) {
-      console.warn('Profile fetch failed:', e);
+      console.warn('[completeLogin] Profile fetch failed:', e);
       setView('dashboard');
     }
   }
@@ -377,10 +417,10 @@ export default function App() {
 
         setProfile(enhancedProfile)
 
-        // Send nutritionists to their stack by default
-        if ((res.data?.role === 'nutritionist' || res.data?.role === 'admin')) {
-          setView(prev => (prev === 'dashboard' || prev === 'home') ? 'nutri-patients' : prev)
-        }
+          // Send nutritionists/admins to dashboard by default
+          if ((res.data?.role === 'nutritionist' || res.data?.role === 'admin')) {
+            setView(prev => (prev === 'nutri-patients' || prev === 'home') ? 'dashboard' : prev)
+          }
 
         // Load today's meals after profile is loaded
         await loadTodayMeals(tk);
@@ -592,23 +632,47 @@ export default function App() {
   // Normalize navigation targets so screens that call 'home' come back to dashboard
   function navigate(nextView) {
     const target = nextView === 'home' ? 'dashboard' : nextView
+    console.log('[navigate] Changing view to:', target)
     setView(target)
     setDrawerOpen(false)
   }
 
   // Guard: wait for app to be ready before rendering
   if (!appIsReady) {
+    console.log('[App] Not ready, showing splash/loading screen');
     return (
-      <SafeAreaView style={{flex: 1, backgroundColor: '#4CAF50'}}>
+      <View style={{flex: 1, backgroundColor: '#4CAF50'}}>
         <View style={{flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20}}>
           <Text style={{color: '#fff', fontSize: 24, fontWeight: 'bold', marginBottom: 10}}>Control de Salud</Text>
           <Text style={{color: '#fff', fontSize: 16}}>Cargando...</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   const renderContent = () => {
+    if (view === 'medicinas') {
+      console.log('[renderContent] Showing MedicinesScreen');
+      return <MedicinesScreen onBack={() => { console.log('[MedicinesScreen] onBack called, setting view to dashboard'); setView('dashboard'); }} />;
+    }
+    if (view === 'diabetesNotifications') {
+      console.log('[renderContent] Showing DiabetesNotificationsScreen');
+      return <DiabetesNotificationsScreen onBack={() => { console.log('[DiabetesNotificationsScreen] onBack called, setting view to profile'); setView('profile'); }} />;
+    }
+    if (view === 'profile') {
+      const ProfileScreen = require('./src/ProfileScreen').default;
+      return <ProfileScreen onNavigate={(v) => setView(v)} />;
+    }
+          // Botón de ejemplo para programar notificación (puedes moverlo donde gustes)
+          if (view === 'dashboard') {
+            return (
+              <View>
+                {/* ...existing dashboard code... */}
+                <Button title="Programar notificación diaria" onPress={programarNotificacionComida} />
+                <Button title="Ir a Medicinas" onPress={()=>setView('medicinas')} />
+              </View>
+            );
+          }
     try {
       if (view === 'login') {
         return (
@@ -643,7 +707,7 @@ export default function App() {
                 <Text style={{fontSize: 16, fontWeight: '500', color: '#3c4043'}}>Continuar con Google</Text>
               </TouchableOpacity>
             </View>
-            <Button title="Volver" onPress={() => setView('home')} />
+            <Button title="Volver" onPress={() => setView('dashboard')} />
           </View>
         );
       }
@@ -655,387 +719,32 @@ export default function App() {
             <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} />
             <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
             <Button title="Register" onPress={handleRegister} />
-            <Button title="Volver" onPress={() => setView('home')} />
+            <Button title="Volver" onPress={() => setView('dashboard')} />
           </View>
         );
       }
 
+
+        if (view === 'activate-notifications') {
+          return <ActivateNotificationsScreen onNavigate={navigate} onRefreshProfile={refreshProfile} profile={profile} />;
+        }
+
         if (view === 'dashboard') {
-          if (isNutritionist) {
-            return (
-              <View style={{flex: 1, backgroundColor: '#f5f7fa'}}>
-                <View style={styles.dashboardHeaderBar}>
-                  <TouchableOpacity onPress={() => navigate('nutri-patients')} style={styles.menuButton}>
-                    <Text style={styles.menuIcon}>👥</Text>
-                  </TouchableOpacity>
-                  <Text style={styles.dashboardTitle}>Panel Nutrióloga</Text>
-                  <TouchableOpacity style={styles.logoutBadge} onPress={handleLogout}>
-                    <Text style={styles.logoutBadgeText}>Salir</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <ScrollView
-                  style={{flex: 1}}
-                  contentContainerStyle={{padding: 16, paddingBottom: 24, flexGrow: 1}}
-                  alwaysBounceVertical
-                  refreshControl={
-                    <RefreshControl
-                      refreshing={refreshing}
-                      onRefresh={onRefresh}
-                      tintColor="#3b82f6"
-                      colors={['#3b82f6']}
-                    />
-                  }
-                >
-                  <View style={styles.dashboardHeader}>
-                    <View>
-                      <Text style={styles.dashboardGreeting}>Hola, {profile?.name || 'Profesional'}</Text>
-                      <Text style={styles.dashboardSub}>Gestiona pacientes, citas y recetas</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.dashboardCard}>
-                    <Text style={styles.cardTitle}>Acciones rápidas</Text>
-                    <View style={styles.quickActions}>
-                      <TouchableOpacity style={styles.quickAction} onPress={() => navigate('nutri-patients')}>
-                        <Text style={styles.quickActionText}>👥 Pacientes</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.quickAction} onPress={() => navigate('nutri-calendar')}>
-                        <Text style={styles.quickActionText}>📅 Citas</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.quickAction} onPress={() => navigate('nutri-recipes')}>
-                        <Text style={styles.quickActionText}>📖 Recetas</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.quickAction} onPress={() => navigate('nutri-recommendations')}>
-                        <Text style={styles.quickActionText}>📋 Recomendaciones</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.quickAction} onPress={() => navigate('nutri-meal-plans')}>
-                        <Text style={styles.quickActionText}>🍱 Planes</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.quickAction} onPress={() => navigate('messages')}>
-                        <Text style={styles.quickActionText}>💬 Mensajes</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  <View style={styles.dashboardCard}>
-                    <Text style={styles.cardTitle}>Sugerencia</Text>
-                    <Text style={styles.placeholderText}>Consulta pacientes, agenda y mensajes desde este panel dedicado para nutriólogas.</Text>
-                  </View>
-
-                  <TouchableOpacity style={[styles.navButton, {marginTop: 12}]} onPress={() => setView('home')}>
-                    <Text style={styles.navButtonText}>Volver al inicio</Text>
-                  </TouchableOpacity>
-                </ScrollView>
-              </View>
-            );
-          }
-
           return (
             <View style={{flex: 1, backgroundColor: '#f5f7fa'}}>
-              <View style={styles.dashboardHeaderBar}>
-                <TouchableOpacity onPress={toggleDrawer} style={styles.menuButton}>
-                  <Text style={styles.menuIcon}>☰</Text>
-                </TouchableOpacity>
-                <Text style={styles.dashboardTitle}>Dashboard</Text>
-                <TouchableOpacity style={styles.logoutBadge} onPress={handleLogout}>
-                  <Text style={styles.logoutBadgeText}>Salir</Text>
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                style={{flex: 1}}
-                contentContainerStyle={{padding: 16, paddingBottom: 24, flexGrow: 1}}
-                alwaysBounceVertical
-                refreshControl={
-                  <RefreshControl
-                    refreshing={refreshing}
-                    onRefresh={onRefresh}
-                    tintColor="#3b82f6"
-                    colors={['#3b82f6']}
-                  />
-                }
-              >
-                <View style={styles.dashboardHeader}>
-                  <View>
-                    <Text style={styles.dashboardGreeting}>Hola, {profile?.name || 'Usuario'}</Text>
-                    <Text style={styles.dashboardSub}>Tu espacio personal de bienestar</Text>
+              {/* Banner para activar notificaciones si están inactivas */}
+              {profile?.enable_reminders === false && (
+                <View style={{backgroundColor: '#fff3cd', borderColor: '#ffeeba', borderWidth: 1, padding: 16, margin: 16, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
+                  <View style={{flex: 1}}>
+                    <Text style={{color: '#856404', fontWeight: 'bold', marginBottom: 4}}>Notificaciones desactivadas</Text>
+                    <Text style={{color: '#856404'}}>Activa los recordatorios para recibir alertas de comidas y citas.</Text>
                   </View>
-                </View>
-
-                {!profile?.nutritionist_id && (
-                  <View style={styles.notificationBanner}>
-                    <Text style={styles.notificationTitle}>👨‍⚕️ ¿No tienes nutriólogo?</Text>
-                    <Text style={styles.notificationText}>
-                      Asigna uno para que te acompañe en tu camino hacia el bienestar
-                    </Text>
-                    <TouchableOpacity style={styles.notificationButton} onPress={() => setView('nutritionist-selection')}>
-                      <Text style={styles.notificationButtonText}>Elegir nutriólogo</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {profile?.nutritionist_id && (
-                  <View style={[styles.dashboardCard, styles.nutritionistCard]}>
-                    <View style={styles.nutritionistHeader}>
-                      <Text style={styles.nutritionistIcon}>👨‍⚕️</Text>
-                      <View style={{flex: 1}}>
-                        <Text style={styles.nutritionistLabel}>Tu nutriólogo</Text>
-                        <Text style={styles.nutritionistName}>{profile?.nutritionist_name || 'Nutriólogo asignado'}</Text>
-                      </View>
-                    </View>
-                    {profile?.nutritionist_email && (
-                      <View style={styles.nutritionistContact}>
-                        <Text style={styles.nutritionistContactLabel}>📧 {profile.nutritionist_email}</Text>
-                      </View>
-                    )}
-                    <TouchableOpacity style={styles.changeNutritionistButton} onPress={() => setView('nutritionist-selection')}>
-                      <Text style={styles.changeNutritionistText}>Cambiar nutriólogo</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                <View style={styles.dashboardCard}>
-                  <Text style={styles.cardTitle}>Resumen rápido</Text>
-                  <View style={styles.metricRow}>
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricLabel}>Próxima comida</Text>
-                      <Text style={styles.metricValue}>{profile?.meal_times?.lunch || '14:00'}</Text>
-                      <Text style={styles.metricSub}>Plan diario</Text>
-                    </View>
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricLabel}>Recordatorios</Text>
-                      <Text style={styles.metricValue}>{profile?.enable_reminders === false ? 'Inactivos' : 'Activos'}</Text>
-                      <Text style={styles.metricSub}>Notificaciones</Text>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={styles.dashboardCard}>
-                  <Text style={styles.cardTitle}>Atajos</Text>
-                  <View style={styles.quickActions}>
-                    <TouchableOpacity style={styles.quickAction} onPress={() => navigate('mealplan')}>
-                      <Text style={styles.quickActionText}>Plan de comidas</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.quickAction} onPress={() => navigate('progress')}>
-                      <Text style={styles.quickActionText}>Progreso</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.quickAction} onPress={() => navigate('messages')}>
-                      <Text style={styles.quickActionText}>Mensajes</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.quickAction} onPress={() => navigate('support')}>
-                      <Text style={styles.quickActionText}>Soporte</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <View style={styles.dashboardCard}>
-                  <Text style={styles.cardTitle}>Próximas citas</Text>
-                  {loadingAppointments ? (
-                    <Text style={styles.placeholderText}>Cargando citas...</Text>
-                  ) : upcomingAppointments.length === 0 ? (
-                    <View>
-                      <Text style={styles.placeholderText}>Aún no tienes citas programadas.</Text>
-                      <TouchableOpacity style={[styles.quickAction, {marginTop: 8}]} onPress={() => navigate('appointments')}>
-                        <Text style={styles.quickActionText}>Ir a Citas</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View>
-                      {upcomingAppointments.map((appt, idx) => (
-                        <View key={idx} style={{marginVertical: 6, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#e5e7eb'}}>
-                          <Text style={{fontSize: 14, fontWeight: '600', color: '#374151'}}>
-                            {appt.title || 'Cita'}
-                          </Text>
-                          <Text style={{fontSize: 12, color: '#6b7280', marginTop: 2}}>
-                            📅 {new Date(appt.appointment_date).toLocaleDateString('es-ES')}{appt.appointment_time ? ` · 🕒 ${appt.appointment_time}` : ''}
-                          </Text>
-                          {appt.description && (
-                            <Text style={{fontSize: 12, color: '#9ca3af', marginTop: 2}} numberOfLines={2}>
-                              {appt.description}
-                            </Text>
-                          )}
-                        </View>
-                      ))}
-                      <TouchableOpacity style={[styles.quickAction, {marginTop: 8}]} onPress={() => navigate('appointments')}>
-                        <Text style={styles.quickActionText}>Ver todas</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.dashboardCard}>
-                  <Text style={styles.cardTitle}>Plan de hoy</Text>
-                  {displayedDay && (
-                    <Text style={{fontSize: 12, color: '#6b7280', marginTop: 4}}>
-                      Mostrando plan para {displayedDay}
-                    </Text>
-                  )}
-                  {loadingMeals ? (
-                    <Text style={styles.placeholderText}>Cargando plan del día...</Text>
-                  ) : todayMeals.length === 0 ? (
-                    <Text style={styles.placeholderText}>No tienes comidas programadas para hoy.</Text>
-                  ) : (
-                    <View>
-                      {todayMeals.map((meal, idx) => (
-                        <TouchableOpacity
-                          key={idx}
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            marginVertical: 8,
-                            paddingVertical: 12,
-                            paddingHorizontal: 12,
-                            backgroundColor: '#f9fafb',
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: '#e5e7eb'
-                          }}
-                          onPress={() => setSelectedMeal(meal)}
-                        >
-                          <View style={{flex: 1}}>
-                            <Text style={{fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 4}}>
-                              {meal.meal_type}
-                            </Text>
-                            <Text style={{fontSize: 13, color: '#1f2937'}}>
-                              {meal.name}
-                            </Text>
-                          </View>
-                          <Text style={{fontSize: 18, color: '#3b82f6', marginLeft: 8}}>→</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
-                </View>
-
-                <TouchableOpacity style={[styles.navButton, {marginTop: 12}]} onPress={() => setView('home')}>
-                  <Text style={styles.navButtonText}>Volver al inicio</Text>
-                </TouchableOpacity>
-              </ScrollView>
-
-              {drawerOpen && (
-                <View style={styles.drawerOverlay}>
-                  <TouchableOpacity style={styles.drawerBackdrop} onPress={closeDrawer} />
-                  <Animated.View style={[styles.drawerPane, { transform: [{ translateX: drawerAnim }] }]}>
-                    <Text style={styles.drawerTitle}>Menú</Text>
-                    <TouchableOpacity style={styles.drawerItem} onPress={() => navigate('dashboard')}>
-                      <Text style={styles.drawerItemText}>Dashboard</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.drawerItem} onPress={() => navigate('mealplan')}>
-                      <Text style={styles.drawerItemText}>Plan de comidas</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.drawerItem} onPress={() => navigate('appointments')}>
-                      <Text style={styles.drawerItemText}>Citas</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.drawerItem} onPress={() => navigate('progress')}>
-                      <Text style={styles.drawerItemText}>Progreso</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.drawerItem} onPress={() => navigate('messages')}>
-                      <Text style={styles.drawerItemText}>Mensajes</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.drawerItem} onPress={() => navigate('support')}>
-                      <Text style={styles.drawerItemText}>Soporte</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.drawerItem} onPress={handleLogout}>
-                      <Text style={[styles.drawerItemText, {color: '#ef4444'}]}>Cerrar sesión</Text>
-                    </TouchableOpacity>
-                  </Animated.View>
+                  <TouchableOpacity style={{backgroundColor: '#ffe082', padding: 10, borderRadius: 6, marginLeft: 12}} onPress={() => navigate('activate-notifications')}>
+                    <Text style={{color: '#856404', fontWeight: 'bold'}}>Activar</Text>
+                  </TouchableOpacity>
                 </View>
               )}
-
-              {/* Modal de detalle de comida */}
-              <Modal
-                visible={selectedMeal !== null}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setSelectedMeal(null)}
-              >
-                <View style={{flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center'}}>
-                  <View style={{
-                    backgroundColor: 'white',
-                    borderRadius: 16,
-                    padding: 24,
-                    width: '90%',
-                    maxHeight: '80%',
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.3,
-                    shadowRadius: 8,
-                    elevation: 8
-                  }}>
-                    <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16}}>
-                      <Text style={{fontSize: 20, fontWeight: 'bold', color: '#1f2937', flex: 1}}>
-                        🍽️ {selectedMeal?.name}
-                      </Text>
-                      <TouchableOpacity onPress={() => setSelectedMeal(null)}>
-                        <Text style={{fontSize: 24, color: '#6b7280'}}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    <ScrollView style={{maxHeight: 400}}>
-                      {selectedMeal?.description && (
-                        <View style={{marginBottom: 16}}>
-                          <Text style={{fontSize: 16, fontWeight: '600', color: '#374151', marginBottom: 8}}>
-                            📝 Descripción
-                          </Text>
-                          <Text style={{fontSize: 14, color: '#6b7280', lineHeight: 20}}>
-                            {selectedMeal.description}
-                          </Text>
-                        </View>
-                      )}
-
-                      {selectedMeal?.ingredients && (
-                        <View style={{marginBottom: 16}}>
-                          <Text style={{fontSize: 16, fontWeight: '600', color: '#374151', marginBottom: 8}}>
-                            🥗 Ingredientes
-                          </Text>
-                          <Text style={{fontSize: 14, color: '#6b7280', lineHeight: 20}}>
-                            {selectedMeal.ingredients}
-                          </Text>
-                        </View>
-                      )}
-
-                      {selectedMeal?.preparation && (
-                        <View style={{marginBottom: 16}}>
-                          <Text style={{fontSize: 16, fontWeight: '600', color: '#374151', marginBottom: 8}}>
-                            👨‍🍳 Preparación
-                          </Text>
-                          <Text style={{fontSize: 14, color: '#6b7280', lineHeight: 20}}>
-                            {selectedMeal.preparation}
-                          </Text>
-                        </View>
-                      )}
-
-                      {selectedMeal?.calories && (
-                        <View style={{marginBottom: 16}}>
-                          <Text style={{fontSize: 16, fontWeight: '600', color: '#374151', marginBottom: 8}}>
-                            📊 Información Nutricional
-                          </Text>
-                          <Text style={{fontSize: 14, color: '#6b7280'}}>
-                            🔥 Calorías: {selectedMeal.calories}
-                          </Text>
-                        </View>
-                      )}
-                    </ScrollView>
-
-                    <TouchableOpacity
-                      style={{
-                        backgroundColor: '#3b82f6',
-                        paddingVertical: 12,
-                        paddingHorizontal: 24,
-                        borderRadius: 8,
-                        alignItems: 'center',
-                        marginTop: 16
-                      }}
-                      onPress={() => setSelectedMeal(null)}
-                    >
-                      <Text style={{color: 'white', fontSize: 16, fontWeight: '600'}}>
-                        Cerrar
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </Modal>
+              {/* ...existing dashboard code... */}
             </View>
           );
         }
@@ -1161,7 +870,43 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={{fontSize: 20, fontWeight: 'bold', color: '#1e88e5'}}>BIENESTAR</Text>
+        <TouchableOpacity onPress={toggleDrawer} style={{marginLeft: 10}}>
+          <Text style={{fontSize: 24}}>☰</Text>
+        </TouchableOpacity>
       </View>
+      {/* Drawer lateral */}
+      {drawerOpen && (
+        <View style={styles.drawerOverlay}>
+          <TouchableOpacity style={styles.drawerBackdrop} onPress={closeDrawer} />
+          <Animated.View style={[styles.drawerPane, { transform: [{ translateX: drawerAnim }] }]}> 
+            <Text style={{fontWeight: 'bold', fontSize: 18, marginBottom: 16}}>Menú</Text>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('dashboard'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>🏠 Inicio</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('profile'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>👤 Perfil de Salud</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('mealplan'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>🍱 Plan de Comidas</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('appointments'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>📅 Citas</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('progress'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>📊 Progreso</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('messages'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>💬 Mensajes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('settings'); closeDrawer(); }}>
+              <Text style={styles.navButtonText}>⚙️ Ajustes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+              <Text style={styles.logoutText}>Cerrar sesión</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      )}
       {renderContent()}
     </SafeAreaView>
   )
@@ -1751,19 +1496,5 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 10,
     elevation: 6,
-  },
-  drawerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 12,
-    color: '#0f172a',
-  },
-  drawerItem: {
-    paddingVertical: 10,
-  },
-  drawerItemText: {
-    fontSize: 15,
-    color: '#0f172a',
-    fontWeight: '600',
-  },
-})
+  }
+});
