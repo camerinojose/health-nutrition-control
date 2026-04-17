@@ -347,8 +347,25 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
+	// Health check endpoint (no auth required)
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "healthy",
+			"time":   time.Now().Format(time.RFC3339),
+		})
+	})
+
 	api := r.Group("/api")
 	{
+		// Health check for API
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "healthy",
+				"service": "bienestarapp-api",
+				"time":    time.Now().Format(time.RFC3339),
+			})
+		})
+
 		api.POST("/register", registerHandler)
 		api.POST("/login", loginHandler)
 		api.POST("/reset-password", resetPasswordHandler)

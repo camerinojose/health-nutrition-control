@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { getToken } from './auth'
 
-const BACKEND_URL = 'https://health-nutrition-control.onrender.com'
+const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://bienestarapp-backend.onrender.com').replace(/\/api$/, '')
 const api = axios.create({
   baseURL: `${BACKEND_URL}/api`
 })

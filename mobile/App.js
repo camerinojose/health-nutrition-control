@@ -9,7 +9,7 @@ function addLog(msg) {
   logBuffer.push(msg);
 }
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform } from 'react-native'
+import { View, Text, Button, StyleSheet, TextInput, TouchableOpacity, Animated, Image, ImageBackground, ScrollView, RefreshControl, Modal, Platform, LogBox } from 'react-native'
 import Constants from 'expo-constants'
 import * as WebBrowser from 'expo-web-browser'
 import * as SplashScreen from 'expo-splash-screen'
@@ -38,7 +38,7 @@ import NutritionistRecommendationsScreen from './src/nutritionist/Recommendation
 import NutritionistMealPlansScreen from './src/nutritionist/MealPlansScreen'
 
 // Configura tu URL de backend
-const BACKEND_URL = 'https://health-nutrition-control.onrender.com'
+const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://bienestarapp-backend.onrender.com').replace(/\/api$/, '')
 
 // Función para determinar la temporada actual
 function getCurrentSeason() {
@@ -66,6 +66,11 @@ function getSeasonalFoodImage() {
 
 WebBrowser.maybeCompleteAuthSession();
 
+LogBox.ignoreLogs([
+  'expo-notifications: Android Push notifications (remote notifications) functionality provided by expo-notifications was removed from Expo Go',
+  'i18next::pluralResolver: Your environment seems not to be Intl API compatible',
+]);
+
 // Evita que la pantalla de bienvenida se oculte automáticamente
 SplashScreen.preventAutoHideAsync().catch(err => {
   console.warn('SplashScreen preventAutoHide failed:', err);
@@ -75,11 +80,19 @@ export default function App() {
       // ...medicine logic moved to MedicinesScreen.js
     // Configuración de notificaciones locales
     useEffect(() => {
+      if (Constants.appOwnership === 'expo' && Platform.OS === 'android') {
+        return;
+      }
+
       // Solicitar permisos al iniciar la app
       (async () => {
-        const { status } = await Notifications.requestPermissionsAsync();
-        if (status !== 'granted') {
-          alert('Permiso de notificaciones no concedido');
+        try {
+          const { status } = await Notifications.requestPermissionsAsync();
+          if (status !== 'granted') {
+            alert('Permiso de notificaciones no concedido');
+          }
+        } catch (error) {
+          console.warn('No se pudo solicitar permisos de notificación:', error?.message || error);
         }
       })();
 
@@ -93,6 +106,10 @@ export default function App() {
 
     // Función de ejemplo para programar una notificación local
     async function programarNotificacionComida() {
+      if (Constants.appOwnership === 'expo' && Platform.OS === 'android') {
+        alert('En Expo Go Android esta función no está disponible. Usa el APK de desarrollo.');
+        return;
+      }
       await Notifications.scheduleNotificationAsync({
         content: {
           title: '¡Hora de preparar tu comida!',
@@ -152,6 +169,11 @@ export default function App() {
 
   // --- Google Auth: Usar callback directo del backend ---
   async function handleGoogleLogin() {
+    if (Constants.appOwnership === 'expo' && Platform.OS === 'android') {
+      alert('Google login en Expo Go Android puede fallar con deep links. Usa login con email/contraseña o el APK de desarrollo.');
+      return;
+    }
+
     authHandledRef.current = false;
     try {
       // Crear el redirect URL que el backend debe usar
