@@ -265,7 +265,7 @@ func main() {
 		}
 
 	} else {
-		// PostgreSQL mode (production)
+		// PostgreSQL mode (production) with SQLite fallback
 		pgUser := getenvOrDefault("POSTGRES_USER", "postgres")
 		pgPass := os.Getenv("POSTGRES_PASSWORD")
 		pgDB := getenvOrDefault("POSTGRES_DB", "bienestar")
@@ -275,14 +275,29 @@ func main() {
 
 		log.Printf("🐘 Connecting to PostgreSQL: %s@%s/%s", pgUser, pgHost, pgDB)
 		db, err = sql.Open("postgres", connStr)
-		if err != nil {
-			log.Fatalf("Error connecting to PostgreSQL: %v", err)
+		if err == nil {
+			err = db.Ping()
 		}
-		err = db.Ping()
+
 		if err != nil {
-			log.Fatalf("PostgreSQL ping failed: %v", err)
+			log.Printf("⚠️ PostgreSQL unavailable (%v). Falling back to SQLite at %s", err, dbPath)
+			useSQLite = "true"
+			db, err = sql.Open("sqlite", dbPath)
+			if err != nil {
+				log.Fatalf("Error connecting to SQLite fallback: %v", err)
+			}
+			err = db.Ping()
+			if err != nil {
+				log.Fatalf("SQLite fallback ping failed: %v", err)
+			}
+			_, err = db.Exec("PRAGMA foreign_keys = ON")
+			if err != nil {
+				log.Fatal("Failed to enable foreign keys: ", err)
+			}
+			log.Println("✅ Successfully connected to SQLite fallback database!")
+		} else {
+			log.Println("✅ Successfully connected to PostgreSQL database!")
 		}
-		log.Println("✅ Successfully connected to PostgreSQL database!")
 	}
 
 	// Migración de tabla medicines
@@ -536,8 +551,11 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Server running on :%s", port)
-	r.Run(":" + port)
+	bindAddr := "0.0.0.0:" + port
+	log.Printf("Server running on %s", bindAddr)
+	if err := r.Run(bindAddr); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
+	}
 }
 
 func migrate() error {
