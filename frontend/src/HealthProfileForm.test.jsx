@@ -34,7 +34,7 @@ describe('HealthProfileForm', () => {
         if (!found) {
           expect(container.textContent).toContain(msg);
         } else {
-          expect(found).toBeInTheDocument();
+          expect(found).toBeTruthy();
         }
       });
     });

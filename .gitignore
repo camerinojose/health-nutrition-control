@@ -18,6 +18,10 @@ coverage/
 dist/
 build/
 *.log
+**/dist/
+*.stackdump
+nul
+*.tmp
 
 # IDE
 .vscode/
@@ -52,8 +56,12 @@ backend/bienestarapp.exe
 *.apk
 *.aab
 *.ipa
+*.keystore
+*.jks
+**/keystore.properties
 .expo/
 .expo-shared/
+mobile/dist-check/
 output.apks
 bundletool-all-*.jar
 

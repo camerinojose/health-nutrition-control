@@ -240,6 +240,22 @@ taskkill /PID [número_del_pid] /F
 cd backend
 sqlite3 data.db "SELECT * FROM users WHERE email='user@test.com';"
 
+# Si existe pero el login igual falla, revisa el esquema (en bases viejas el id podía quedar NULL)
+sqlite3 data.db ".schema users"
+
+# Si ves un esquema incorrecto o IDs raros/NULL, haz reset de la DB local:
+# 1) Detén el backend (Ctrl+C)
+# 2) Borra la base
+#    Git Bash / macOS / Linux:
+#    rm -f backend/data.db
+#
+#    Windows (CMD):
+#    del backend\data.db
+#
+#    Windows (PowerShell):
+#    Remove-Item backend\data.db -Force
+# 3) Inicia el backend otra vez para que recree tablas + usuarios de prueba
+
 # Si no existe, el backend debería crearlo automáticamente
 # Reinicia el backend
 ```

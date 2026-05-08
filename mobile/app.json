@@ -22,7 +22,6 @@
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
       ],
-      "useNextNotificationsApi": true,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -31,14 +30,20 @@
             "host": "192.168.100.27",
             "pathPrefix": "/--/oauth-callback"
           },
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         },
         {
           "action": "VIEW",
           "data": {
             "scheme": "com.bienestarappmobile"
           },
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -56,7 +61,9 @@
           "color": "#9b59b6",
           "sounds": []
         }
-      ]
+      ],
+      "expo-web-browser",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyDqSJeMrcbX4-tosZchFm-Vbz0jih6gJu0",

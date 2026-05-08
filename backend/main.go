@@ -154,6 +154,14 @@ type Medicine struct {
 	Taken  bool   `json:"taken"`
 }
 
+type MedicineHistory struct {
+	ID         int    `json:"id"`
+	MedicineID int    `json:"medicine_id"`
+	Name       string `json:"name"`
+	TakenDate  string `json:"taken_date"`
+	TakenAt    string `json:"taken_at"`
+}
+
 type OCRResult struct {
 	Name             string  `json:"name"`
 	Height           float64 `json:"height"`
@@ -309,6 +317,16 @@ func main() {
 			time TEXT,
 			taken INTEGER DEFAULT 0
 		)`)
+		if err == nil {
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicine_logs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				medicine_id INTEGER NOT NULL,
+				taken_date TEXT NOT NULL,
+				taken_at TEXT NOT NULL,
+				FOREIGN KEY(medicine_id) REFERENCES medicines(id)
+			)`)
+		}
 	} else {
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicines (
 			id SERIAL PRIMARY KEY,
@@ -317,12 +335,22 @@ func main() {
 			time TEXT,
 			taken BOOLEAN DEFAULT FALSE
 		)`)
+		if err == nil {
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS medicine_logs (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER NOT NULL,
+				medicine_id INTEGER NOT NULL,
+				taken_date TEXT NOT NULL,
+				taken_at TEXT NOT NULL,
+				FOREIGN KEY(medicine_id) REFERENCES medicines(id)
+			)`)
+		}
 	}
 	if err != nil {
-		log.Fatal("No se pudo crear la tabla medicines: ", err)
+		log.Fatal("No se pudieron crear las tablas de medicinas: ", err)
 	}
 
-	if err := migrate(); err != nil {
+	if err := migrate(useSQLite == "true"); err != nil {
 		log.Fatal(err)
 	}
 
@@ -400,10 +428,22 @@ func main() {
 		auth := api.Group("")
 		auth.Use(authMiddleware())
 		{
-			// Medicines CRUD endpoints
+			// Medicines CRUD + daily history endpoints
 			auth.GET("/medicines", func(c *gin.Context) {
 				userID := getUserIDFromContext(c)
-				rows, err := db.Query("SELECT id, user_id, name, time, taken FROM medicines WHERE user_id = ?", userID)
+				today := time.Now().Format("2006-01-02")
+				rows, err := db.Query(`
+					SELECT m.id, m.user_id, m.name, m.time, d.taken_at
+					FROM medicines m
+					LEFT JOIN (
+						SELECT medicine_id, MAX(taken_at) AS taken_at
+						FROM medicine_logs
+						WHERE user_id = ? AND taken_date = ?
+						GROUP BY medicine_id
+					) d ON d.medicine_id = m.id
+					WHERE m.user_id = ?
+					ORDER BY m.id DESC
+				`, userID, today, userID)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al consultar medicinas"})
 					return
@@ -412,13 +452,40 @@ func main() {
 				var meds []Medicine
 				for rows.Next() {
 					var m Medicine
-					var takenInt int
-					if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Time, &takenInt); err == nil {
-						m.Taken = takenInt == 1
+					var takenAt sql.NullString
+					if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Time, &takenAt); err == nil {
+						m.Taken = takenAt.Valid && takenAt.String != ""
 						meds = append(meds, m)
 					}
 				}
 				c.JSON(http.StatusOK, meds)
+			})
+
+			auth.GET("/medicines/history", func(c *gin.Context) {
+				userID := getUserIDFromContext(c)
+				rows, err := db.Query(`
+					SELECT l.id, l.medicine_id, m.name, l.taken_date, l.taken_at
+					FROM medicine_logs l
+					JOIN medicines m ON m.id = l.medicine_id
+					WHERE l.user_id = ?
+					ORDER BY l.taken_at DESC
+					LIMIT 100
+				`, userID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al consultar historial de medicinas"})
+					return
+				}
+				defer rows.Close()
+
+				var history []MedicineHistory
+				for rows.Next() {
+					var h MedicineHistory
+					if err := rows.Scan(&h.ID, &h.MedicineID, &h.Name, &h.TakenDate, &h.TakenAt); err == nil {
+						history = append(history, h)
+					}
+				}
+
+				c.JSON(http.StatusOK, history)
 			})
 
 			auth.POST("/medicines", func(c *gin.Context) {
@@ -444,11 +511,27 @@ func main() {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
 					return
 				}
-				_, err := db.Exec("UPDATE medicines SET name = ?, time = ?, taken = ? WHERE id = ? AND user_id = ?", req.Name, req.Time, boolToInt(req.Taken), id, userID)
+
+				_, err := db.Exec("UPDATE medicines SET name = ?, time = ? WHERE id = ? AND user_id = ?", req.Name, req.Time, id, userID)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo actualizar medicina"})
 					return
 				}
+
+				today := time.Now().Format("2006-01-02")
+				now := time.Now().Format(time.RFC3339)
+
+				if req.Taken {
+					_, _ = db.Exec("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
+					_, err = db.Exec("INSERT INTO medicine_logs (user_id, medicine_id, taken_date, taken_at) VALUES (?, ?, ?, ?)", userID, id, today, now)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo registrar la toma de hoy"})
+						return
+					}
+				} else {
+					_, _ = db.Exec("DELETE FROM medicine_logs WHERE user_id = ? AND medicine_id = ? AND taken_date = ?", userID, id, today)
+				}
+
 				c.JSON(http.StatusOK, gin.H{"message": "Medicina actualizada"})
 			})
 
@@ -558,147 +641,294 @@ func main() {
 	}
 }
 
-func migrate() error {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
-		`CREATE TABLE IF NOT EXISTS histories (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
-		`CREATE TABLE IF NOT EXISTS meal_plans (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
-		`CREATE TABLE IF NOT EXISTS plan_meals (id SERIAL PRIMARY KEY, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
-		`CREATE TABLE IF NOT EXISTS food_logs (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, meal_type TEXT, completed BOOLEAN, notes TEXT, UNIQUE(user_id, date, meal_type), FOREIGN KEY(user_id) REFERENCES users(id));`,
-		`CREATE TABLE IF NOT EXISTS user_settings (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER UNIQUE,
-			meal_times TEXT,
-			enable_reminders BOOLEAN DEFAULT FALSE,
-			FOREIGN KEY(user_id) REFERENCES users(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS appointments (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER,
-			title TEXT,
-			description TEXT,
-			appointment_date TEXT,
-			appointment_time TEXT,
-			status TEXT DEFAULT 'scheduled',
-			notes TEXT,
-			is_archived BOOLEAN DEFAULT FALSE,
-			created_at TEXT,
-			FOREIGN KEY(user_id) REFERENCES users(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS recipes (
-			id SERIAL PRIMARY KEY,
-			name TEXT NOT NULL,
-			category TEXT,
-			prep_time INTEGER,
-			servings INTEGER,
-			calories INTEGER,
-			protein DOUBLE PRECISION,
-			carbs DOUBLE PRECISION,
-			fat DOUBLE PRECISION,
-			ingredients TEXT,
-			instructions TEXT,
-			image_url TEXT,
-			created_at TEXT
-		);`,
-		`CREATE TABLE IF NOT EXISTS messages (
-			id SERIAL PRIMARY KEY,
-			sender_id INTEGER,
-			recipient_id INTEGER,
-			content TEXT NOT NULL,
-			is_read BOOLEAN DEFAULT FALSE,
-			created_at TEXT,
-			FOREIGN KEY(sender_id) REFERENCES users(id),
-			FOREIGN KEY(recipient_id) REFERENCES users(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS deleted_messages (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER NOT NULL,
-			message_id INTEGER NOT NULL,
-			created_at TEXT,
-			UNIQUE(user_id, message_id),
-			FOREIGN KEY(user_id) REFERENCES users(id),
-			FOREIGN KEY(message_id) REFERENCES messages(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS health_profiles (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER UNIQUE,
-			age INTEGER,
-			sex TEXT,
-			height DOUBLE PRECISION,
-			current_weight DOUBLE PRECISION,
-			goal_weight DOUBLE PRECISION,
-			waist_circumference DOUBLE PRECISION,
-			medical_conditions TEXT,
-			medications TEXT,
-			allergies TEXT,
-			glucose_fasting DOUBLE PRECISION,
-			hba1c DOUBLE PRECISION,
-			cholesterol_total DOUBLE PRECISION,
-			cholesterol_ldl DOUBLE PRECISION,
-			cholesterol_hdl DOUBLE PRECISION,
-			triglycerides DOUBLE PRECISION,
-			activity_level TEXT,
-			meal_schedule TEXT,
-			sleep_hours DOUBLE PRECISION,
-			goals TEXT,
-			updated_at TEXT,
-			FOREIGN KEY(user_id) REFERENCES users(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS appointment_changes (
-			id SERIAL PRIMARY KEY,
-			appointment_id INTEGER NOT NULL,
-			proposed_by INTEGER NOT NULL,
-			new_date TEXT NOT NULL,
-			new_time TEXT NOT NULL,
-			reason TEXT,
-			status TEXT DEFAULT 'pending',
-			created_at TEXT,
-			responded_at TEXT,
-			FOREIGN KEY(appointment_id) REFERENCES appointments(id),
-			FOREIGN KEY(proposed_by) REFERENCES users(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS notifications (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER NOT NULL,
-			type TEXT NOT NULL,
-			title TEXT NOT NULL,
-			message TEXT NOT NULL,
-			related_id INTEGER,
-			is_read BOOLEAN DEFAULT FALSE,
-			created_at TEXT,
-			FOREIGN KEY(user_id) REFERENCES users(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS nutritionist_availability (
-			id SERIAL PRIMARY KEY,
-			nutritionist_id INTEGER NOT NULL,
-			day_of_week INTEGER NOT NULL,
-			start_time TEXT NOT NULL,
-			end_time TEXT NOT NULL,
-			is_available BOOLEAN DEFAULT TRUE,
-			FOREIGN KEY(nutritionist_id) REFERENCES users(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS recommendations (
-			id SERIAL PRIMARY KEY,
-			patient_id INTEGER NOT NULL,
-			nutritionist_id INTEGER NOT NULL,
-			appointment_id INTEGER,
-			recommendation_text TEXT,
-			diet_changes TEXT,
-			exercise_plan TEXT,
-			next_goals TEXT,
-			created_at TEXT,
-			FOREIGN KEY(patient_id) REFERENCES users(id),
-			FOREIGN KEY(nutritionist_id) REFERENCES users(id),
-			FOREIGN KEY(appointment_id) REFERENCES appointments(id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS push_tokens (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER NOT NULL,
-			token TEXT NOT NULL UNIQUE,
-			device_type TEXT,
-			created_at TEXT,
-			FOREIGN KEY(user_id) REFERENCES users(id)
-		);`,
+func migrate(useSQLite bool) error {
+	var queries []string
+	if useSQLite {
+		queries = []string{
+			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
+			`CREATE TABLE IF NOT EXISTS histories (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
+			`CREATE TABLE IF NOT EXISTS meal_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
+			`CREATE TABLE IF NOT EXISTS plan_meals (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
+			`CREATE TABLE IF NOT EXISTS food_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, meal_type TEXT, completed BOOLEAN, notes TEXT, UNIQUE(user_id, date, meal_type), FOREIGN KEY(user_id) REFERENCES users(id));`,
+			`CREATE TABLE IF NOT EXISTS user_settings (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER UNIQUE,
+				meal_times TEXT,
+				reminder_settings TEXT,
+				enable_reminders BOOLEAN DEFAULT FALSE,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS appointments (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER,
+				title TEXT,
+				description TEXT,
+				appointment_date TEXT,
+				appointment_time TEXT,
+				status TEXT DEFAULT 'scheduled',
+				notes TEXT,
+				is_archived BOOLEAN DEFAULT FALSE,
+				created_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS recipes (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT NOT NULL,
+				category TEXT,
+				prep_time INTEGER,
+				servings INTEGER,
+				calories INTEGER,
+				protein DOUBLE PRECISION,
+				carbs DOUBLE PRECISION,
+				fat DOUBLE PRECISION,
+				ingredients TEXT,
+				instructions TEXT,
+				image_url TEXT,
+				created_at TEXT
+			);`,
+			`CREATE TABLE IF NOT EXISTS messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				sender_id INTEGER,
+				recipient_id INTEGER,
+				content TEXT NOT NULL,
+				is_read BOOLEAN DEFAULT FALSE,
+				created_at TEXT,
+				FOREIGN KEY(sender_id) REFERENCES users(id),
+				FOREIGN KEY(recipient_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS deleted_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				message_id INTEGER NOT NULL,
+				created_at TEXT,
+				UNIQUE(user_id, message_id),
+				FOREIGN KEY(user_id) REFERENCES users(id),
+				FOREIGN KEY(message_id) REFERENCES messages(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS health_profiles (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER UNIQUE,
+				age INTEGER,
+				sex TEXT,
+				height DOUBLE PRECISION,
+				current_weight DOUBLE PRECISION,
+				goal_weight DOUBLE PRECISION,
+				waist_circumference DOUBLE PRECISION,
+				medical_conditions TEXT,
+				medications TEXT,
+				allergies TEXT,
+				glucose_fasting DOUBLE PRECISION,
+				hba1c DOUBLE PRECISION,
+				cholesterol_total DOUBLE PRECISION,
+				cholesterol_ldl DOUBLE PRECISION,
+				cholesterol_hdl DOUBLE PRECISION,
+				triglycerides DOUBLE PRECISION,
+				activity_level TEXT,
+				meal_schedule TEXT,
+				sleep_hours DOUBLE PRECISION,
+				goals TEXT,
+				updated_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS appointment_changes (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				appointment_id INTEGER NOT NULL,
+				proposed_by INTEGER NOT NULL,
+				new_date TEXT NOT NULL,
+				new_time TEXT NOT NULL,
+				reason TEXT,
+				status TEXT DEFAULT 'pending',
+				created_at TEXT,
+				responded_at TEXT,
+				FOREIGN KEY(appointment_id) REFERENCES appointments(id),
+				FOREIGN KEY(proposed_by) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS notifications (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				type TEXT NOT NULL,
+				title TEXT NOT NULL,
+				message TEXT NOT NULL,
+				related_id INTEGER,
+				is_read BOOLEAN DEFAULT FALSE,
+				created_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS nutritionist_availability (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				nutritionist_id INTEGER NOT NULL,
+				day_of_week INTEGER NOT NULL,
+				start_time TEXT NOT NULL,
+				end_time TEXT NOT NULL,
+				is_available BOOLEAN DEFAULT TRUE,
+				FOREIGN KEY(nutritionist_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS recommendations (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				patient_id INTEGER NOT NULL,
+				nutritionist_id INTEGER NOT NULL,
+				appointment_id INTEGER,
+				recommendation_text TEXT,
+				diet_changes TEXT,
+				exercise_plan TEXT,
+				next_goals TEXT,
+				created_at TEXT,
+				FOREIGN KEY(patient_id) REFERENCES users(id),
+				FOREIGN KEY(nutritionist_id) REFERENCES users(id),
+				FOREIGN KEY(appointment_id) REFERENCES appointments(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS push_tokens (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				token TEXT NOT NULL UNIQUE,
+				device_type TEXT,
+				created_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+		}
+	} else {
+		queries = []string{
+			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT UNIQUE, password TEXT, role TEXT);`,
+			`CREATE TABLE IF NOT EXISTS histories (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, weight DOUBLE PRECISION, fat_percentage DOUBLE PRECISION, muscle_percentage DOUBLE PRECISION, FOREIGN KEY(user_id) REFERENCES users(id));`,
+			`CREATE TABLE IF NOT EXISTS meal_plans (id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, start_date TEXT, snacks TEXT, created_at TEXT, FOREIGN KEY(user_id) REFERENCES users(id));`,
+			`CREATE TABLE IF NOT EXISTS plan_meals (id SERIAL PRIMARY KEY, plan_id INTEGER, day_of_week TEXT, meal_type TEXT, name TEXT, ingredients TEXT, preparation TEXT, FOREIGN KEY(plan_id) REFERENCES meal_plans(id));`,
+			`CREATE TABLE IF NOT EXISTS food_logs (id SERIAL PRIMARY KEY, user_id INTEGER, date TEXT, meal_type TEXT, completed BOOLEAN, notes TEXT, UNIQUE(user_id, date, meal_type), FOREIGN KEY(user_id) REFERENCES users(id));`,
+			`CREATE TABLE IF NOT EXISTS user_settings (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER UNIQUE,
+				meal_times TEXT,
+				reminder_settings TEXT,
+				enable_reminders BOOLEAN DEFAULT FALSE,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS appointments (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER,
+				title TEXT,
+				description TEXT,
+				appointment_date TEXT,
+				appointment_time TEXT,
+				status TEXT DEFAULT 'scheduled',
+				notes TEXT,
+				is_archived BOOLEAN DEFAULT FALSE,
+				created_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS recipes (
+				id SERIAL PRIMARY KEY,
+				name TEXT NOT NULL,
+				category TEXT,
+				prep_time INTEGER,
+				servings INTEGER,
+				calories INTEGER,
+				protein DOUBLE PRECISION,
+				carbs DOUBLE PRECISION,
+				fat DOUBLE PRECISION,
+				ingredients TEXT,
+				instructions TEXT,
+				image_url TEXT,
+				created_at TEXT
+			);`,
+			`CREATE TABLE IF NOT EXISTS messages (
+				id SERIAL PRIMARY KEY,
+				sender_id INTEGER,
+				recipient_id INTEGER,
+				content TEXT NOT NULL,
+				is_read BOOLEAN DEFAULT FALSE,
+				created_at TEXT,
+				FOREIGN KEY(sender_id) REFERENCES users(id),
+				FOREIGN KEY(recipient_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS deleted_messages (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER NOT NULL,
+				message_id INTEGER NOT NULL,
+				created_at TEXT,
+				UNIQUE(user_id, message_id),
+				FOREIGN KEY(user_id) REFERENCES users(id),
+				FOREIGN KEY(message_id) REFERENCES messages(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS health_profiles (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER UNIQUE,
+				age INTEGER,
+				sex TEXT,
+				height DOUBLE PRECISION,
+				current_weight DOUBLE PRECISION,
+				goal_weight DOUBLE PRECISION,
+				waist_circumference DOUBLE PRECISION,
+				medical_conditions TEXT,
+				medications TEXT,
+				allergies TEXT,
+				glucose_fasting DOUBLE PRECISION,
+				hba1c DOUBLE PRECISION,
+				cholesterol_total DOUBLE PRECISION,
+				cholesterol_ldl DOUBLE PRECISION,
+				cholesterol_hdl DOUBLE PRECISION,
+				triglycerides DOUBLE PRECISION,
+				activity_level TEXT,
+				meal_schedule TEXT,
+				sleep_hours DOUBLE PRECISION,
+				goals TEXT,
+				updated_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS appointment_changes (
+				id SERIAL PRIMARY KEY,
+				appointment_id INTEGER NOT NULL,
+				proposed_by INTEGER NOT NULL,
+				new_date TEXT NOT NULL,
+				new_time TEXT NOT NULL,
+				reason TEXT,
+				status TEXT DEFAULT 'pending',
+				created_at TEXT,
+				responded_at TEXT,
+				FOREIGN KEY(appointment_id) REFERENCES appointments(id),
+				FOREIGN KEY(proposed_by) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS notifications (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER NOT NULL,
+				type TEXT NOT NULL,
+				title TEXT NOT NULL,
+				message TEXT NOT NULL,
+				related_id INTEGER,
+				is_read BOOLEAN DEFAULT FALSE,
+				created_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS nutritionist_availability (
+				id SERIAL PRIMARY KEY,
+				nutritionist_id INTEGER NOT NULL,
+				day_of_week INTEGER NOT NULL,
+				start_time TEXT NOT NULL,
+				end_time TEXT NOT NULL,
+				is_available BOOLEAN DEFAULT TRUE,
+				FOREIGN KEY(nutritionist_id) REFERENCES users(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS recommendations (
+				id SERIAL PRIMARY KEY,
+				patient_id INTEGER NOT NULL,
+				nutritionist_id INTEGER NOT NULL,
+				appointment_id INTEGER,
+				recommendation_text TEXT,
+				diet_changes TEXT,
+				exercise_plan TEXT,
+				next_goals TEXT,
+				created_at TEXT,
+				FOREIGN KEY(patient_id) REFERENCES users(id),
+				FOREIGN KEY(nutritionist_id) REFERENCES users(id),
+				FOREIGN KEY(appointment_id) REFERENCES appointments(id)
+			);`,
+			`CREATE TABLE IF NOT EXISTS push_tokens (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER NOT NULL,
+				token TEXT NOT NULL UNIQUE,
+				device_type TEXT,
+				created_at TEXT,
+				FOREIGN KEY(user_id) REFERENCES users(id)
+			);`,
+		}
 	}
 	for _, q := range queries {
 		if _, err := db.Exec(q); err != nil {
@@ -711,6 +941,9 @@ func migrate() error {
 
 	// Add nutritionist_id column to users table if it doesn't exist
 	db.Exec(`ALTER TABLE users ADD COLUMN nutritionist_id INTEGER;`)
+
+	// Add reminder_settings column to existing user_settings table (migration)
+	db.Exec(`ALTER TABLE user_settings ADD COLUMN reminder_settings TEXT;`)
 
 	log.Println("✅ Database migration completed successfully")
 	return nil
@@ -1010,7 +1243,7 @@ func updateHealthProfileHandler(c *gin.Context) {
 
 	log.Printf("[HealthProfile] Updating profile for user %d", claims.UserID)
 
-	_, err := db.Exec(`
+	res, err := db.Exec(`
 		UPDATE health_profiles SET
 			age = ?, sex = ?, height = ?, current_weight = ?, goal_weight = ?,
 			waist_circumference = ?, medical_conditions = ?, medications = ?,
@@ -1030,6 +1263,13 @@ func updateHealthProfileHandler(c *gin.Context) {
 		log.Printf("[HealthProfile] Error updating profile: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudo actualizar perfil"})
 		return
+	}
+
+	if rows, err := res.RowsAffected(); err == nil {
+		if rows == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "perfil no encontrado"})
+			return
+		}
 	}
 
 	log.Printf("[HealthProfile] Profile updated successfully for user %d", claims.UserID)
@@ -2280,8 +2520,9 @@ func parseMealPlanText(text string) ([]PlanMeal, string) {
 func updateSettingsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 	var req struct {
-		MealTimes       map[string]string `json:"meal_times"`
-		EnableReminders bool              `json:"enable_reminders"`
+		MealTimes        map[string]string `json:"meal_times"`
+		ReminderSettings any               `json:"reminder_settings"`
+		EnableReminders  bool              `json:"enable_reminders"`
 	}
 
 	if err := c.BindJSON(&req); err != nil {
@@ -2296,13 +2537,24 @@ func updateSettingsHandler(c *gin.Context) {
 		return
 	}
 
+	reminderSettingsJSON := ""
+	if req.ReminderSettings != nil {
+		b, err := json.Marshal(req.ReminderSettings)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode settings"})
+			return
+		}
+		reminderSettingsJSON = string(b)
+	}
+
 	_, err = db.Exec(`
-		INSERT INTO user_settings (user_id, meal_times, enable_reminders)
-		VALUES (?, ?, ?)
+		INSERT INTO user_settings (user_id, meal_times, reminder_settings, enable_reminders)
+		VALUES (?, ?, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
 			meal_times = excluded.meal_times,
+			reminder_settings = excluded.reminder_settings,
 			enable_reminders = excluded.enable_reminders
-	`, claims.UserID, string(mealTimesJSON), req.EnableReminders)
+	`, claims.UserID, string(mealTimesJSON), reminderSettingsJSON, req.EnableReminders)
 
 	if err != nil {
 		log.Printf("[Settings] Error saving: %v", err)
@@ -2317,13 +2569,14 @@ func getSettingsHandler(c *gin.Context) {
 	claims := c.MustGet("claims").(*Claims)
 
 	var mealTimesJSON string
+	var reminderSettingsJSON sql.NullString
 	var enableReminders bool
 
 	err := db.QueryRow(`
-		SELECT meal_times, enable_reminders
+		SELECT meal_times, reminder_settings, enable_reminders
 		FROM user_settings
 		WHERE user_id = ?
-	`, claims.UserID).Scan(&mealTimesJSON, &enableReminders)
+	`, claims.UserID).Scan(&mealTimesJSON, &reminderSettingsJSON, &enableReminders)
 
 	if err == sql.ErrNoRows {
 		// Return default settings
@@ -2333,6 +2586,12 @@ func getSettingsHandler(c *gin.Context) {
 				"lunch":     "14:00",
 				"dinner":    "20:00",
 				"snack":     "16:00",
+			},
+			"reminder_settings": gin.H{
+				"medicineMealOffsetMinutes":    30,
+				"diabetesPreMealMinutesBefore": 15,
+				"diabetesGlucoseHoursAfter":    2,
+				"diabetesActivityMinutesAfter": 30,
 			},
 			"enable_reminders": false,
 		})
@@ -2350,9 +2609,23 @@ func getSettingsHandler(c *gin.Context) {
 		return
 	}
 
+	var reminderSettings any = gin.H{
+		"medicineMealOffsetMinutes":    30,
+		"diabetesPreMealMinutesBefore": 15,
+		"diabetesGlucoseHoursAfter":    2,
+		"diabetesActivityMinutesAfter": 30,
+	}
+	if reminderSettingsJSON.Valid && strings.TrimSpace(reminderSettingsJSON.String) != "" {
+		var parsed any
+		if err := json.Unmarshal([]byte(reminderSettingsJSON.String), &parsed); err == nil {
+			reminderSettings = parsed
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"meal_times":       mealTimes,
-		"enable_reminders": enableReminders,
+		"meal_times":        mealTimes,
+		"reminder_settings": reminderSettings,
+		"enable_reminders":  enableReminders,
 	})
 }
 
@@ -2663,6 +2936,17 @@ func seedDefaultUsers() error {
 	}
 
 	if err := ensureUserExists(nutriEmail, nutriName, nutriPassword, "nutritionist"); err != nil {
+		return err
+	}
+
+	// Documented local test accounts (used in guides and smoke tests)
+	if err := ensureUserExists("user@test.com", "Test User", "password123", "user"); err != nil {
+		return err
+	}
+	if err := ensureUserExists("nutritionist@test.com", "Test Nutritionist", "password123", "nutritionist"); err != nil {
+		return err
+	}
+	if err := ensureUserExists("admin@test.com", "Test Admin", "password123", "admin"); err != nil {
 		return err
 	}
 

@@ -8,10 +8,40 @@ import {
   ActivityIndicator,
   Modal,
   SafeAreaView,
-  Alert
+  Alert,
+  Platform
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import api from './api';
+import { DEFAULT_MEAL_TIMES, loadMealTimes, saveMealTimes, normalizeMealTimes } from './mealTimes';
+import { DEFAULT_REMINDER_SETTINGS, loadReminderSettings, saveReminderSettings, normalizeReminderSettings } from './reminderSettings';
+import { setupDiabetesNotifications } from './diabetesNotifications';
+
+const MEAL_REMINDER_IDS_KEY = 'bienestar_meal_reminder_ids_v1';
+
+function isValidHHMM(str) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(str || ''));
+}
+
+function toDateForTimePicker(hhmm) {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  if (isValidHHMM(hhmm)) {
+    const [hh, mm] = hhmm.split(':').map(Number);
+    d.setHours(hh, mm, 0, 0);
+  }
+  return d;
+}
+
+function formatHHMMFromDate(date) {
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
 
 export default function MealPlanScreen({ onNavigate }) {
   const { t } = useTranslation();
@@ -19,6 +49,17 @@ export default function MealPlanScreen({ onNavigate }) {
   const [meals, setMeals] = useState([]);
   const [logs, setLogs] = useState({});
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [schedulingMeals, setSchedulingMeals] = useState(false);
+  const [schedulingDiabetes, setSchedulingDiabetes] = useState(false);
+  const [mealTimes, setMealTimes] = useState(DEFAULT_MEAL_TIMES);
+  const [showMealTimesModal, setShowMealTimesModal] = useState(false);
+  const [mealTimesDraft, setMealTimesDraft] = useState(DEFAULT_MEAL_TIMES);
+  const [reminderSettings, setReminderSettings] = useState(DEFAULT_REMINDER_SETTINGS);
+  const [reminderSettingsDraft, setReminderSettingsDraft] = useState(DEFAULT_REMINDER_SETTINGS);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [timePickerMealKey, setTimePickerMealKey] = useState('breakfast');
+  const [timePickerValue, setTimePickerValue] = useState(() => toDateForTimePicker(DEFAULT_MEAL_TIMES.breakfast));
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedMeal, setSelectedMeal] = useState(null);
 
@@ -29,6 +70,260 @@ export default function MealPlanScreen({ onNavigate }) {
     loadMealPlan();
     loadFoodLogs();
   }, [selectedDate]);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      const saved = await loadMealTimes();
+      const savedReminderSettings = await loadReminderSettings();
+      if (!isMounted) return;
+      setMealTimes(saved);
+      setMealTimesDraft(saved);
+      setReminderSettings(savedReminderSettings);
+      setReminderSettingsDraft(savedReminderSettings);
+      setTimePickerValue(toDateForTimePicker(saved.breakfast));
+
+    // Best-effort: sync from server (so settings survive reinstall / other devices)
+    try {
+      const res = await api.get('/settings');
+      const serverMealTimes = res?.data?.meal_times;
+      const serverReminderSettings = res?.data?.reminder_settings;
+      if (serverMealTimes && typeof serverMealTimes === 'object') {
+        const normalized = normalizeMealTimes(serverMealTimes);
+        await saveMealTimes(normalized);
+        if (!isMounted) return;
+        setMealTimes(normalized);
+        setMealTimesDraft(normalized);
+        setTimePickerValue(toDateForTimePicker(normalized.breakfast));
+      }
+      if (serverReminderSettings && typeof serverReminderSettings === 'object') {
+        const normalizedRS = normalizeReminderSettings(serverReminderSettings);
+        await saveReminderSettings(normalizedRS);
+        if (!isMounted) return;
+        setReminderSettings(normalizedRS);
+        setReminderSettingsDraft(normalizedRS);
+      }
+    } catch (_) {
+      // ignore (offline / no session)
+    }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const programarRecordatoriosComidas = async () => {
+    if (schedulingMeals) return;
+    setSchedulingMeals(true);
+    try {
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.HIGH,
+        });
+      }
+
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permisos requeridos', 'Activa las notificaciones en Ajustes para recibir recordatorios.');
+        return;
+      }
+
+      // Cancel only previous meal reminders (do not cancel all app notifications)
+      try {
+        const prevRaw = await AsyncStorage.getItem(MEAL_REMINDER_IDS_KEY);
+        const prevIds = JSON.parse(prevRaw || '[]');
+        if (Array.isArray(prevIds)) {
+          await Promise.all(prevIds.map((id) => Notifications.cancelScheduledNotificationAsync(String(id)).catch(() => null)));
+        }
+      } catch (_) {
+        // ignore
+      }
+
+      const newIds = [];
+      const normalizedTimes = normalizeMealTimes(mealTimes);
+      const mealsToSchedule = [
+        { key: 'breakfast', label: 'Desayuno', time: normalizedTimes.breakfast },
+        { key: 'lunch', label: 'Comida', time: normalizedTimes.lunch },
+        { key: 'dinner', label: 'Cena', time: normalizedTimes.dinner },
+      ];
+
+      for (const meal of mealsToSchedule) {
+        const [hour, minute] = String(meal.time).split(':').map(Number);
+        if (isNaN(hour) || isNaN(minute)) continue;
+        const id = await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `🍽️ Hora de ${meal.label}`,
+            body: `Es momento de ${meal.label.toLowerCase()}.`,
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DAILY,
+            hour,
+            minute,
+            ...(Platform.OS === 'android' ? { channelId: 'default' } : {}),
+          },
+        });
+        newIds.push(id);
+      }
+
+      try {
+        await AsyncStorage.setItem(MEAL_REMINDER_IDS_KEY, JSON.stringify(newIds));
+      } catch (_) {
+        // ignore
+      }
+
+      Alert.alert('✅ Listo', 'Recordatorios de comidas programados.');
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'No se pudieron programar los recordatorios');
+    } finally {
+      setSchedulingMeals(false);
+    }
+  };
+
+  function openMealTimePicker(mealKey) {
+    setTimePickerMealKey(mealKey);
+    setTimePickerValue(toDateForTimePicker(mealTimesDraft[mealKey]));
+    setShowTimePicker(true);
+  }
+
+  function onMealTimePicked(event, selected) {
+    if (Platform.OS === 'android') {
+      setShowTimePicker(false);
+    }
+    if (event?.type === 'dismissed') return;
+    if (!selected) return;
+
+    const nextValue = formatHHMMFromDate(selected);
+    setMealTimesDraft((prev) => ({ ...prev, [timePickerMealKey]: nextValue }));
+    setTimePickerValue(selected);
+  }
+
+  function setDraftSetting(key, value) {
+    setReminderSettingsDraft((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function saveMealTimesFromModal() {
+    const saved = await saveMealTimes(mealTimesDraft);
+    const savedRS = await saveReminderSettings(reminderSettingsDraft);
+    setMealTimes(saved);
+    setMealTimesDraft(saved);
+    setReminderSettings(savedRS);
+    setReminderSettingsDraft(savedRS);
+    setShowMealTimesModal(false);
+
+    // Best-effort: persist to server, preserving other fields
+    try {
+      const current = await api.get('/settings');
+      const enableReminders = !!current?.data?.enable_reminders;
+      await api.put('/settings', {
+        meal_times: saved,
+        reminder_settings: savedRS,
+        enable_reminders: enableReminders,
+      });
+    } catch (_) {
+      // ignore (offline)
+    }
+  }
+
+  async function saveAndScheduleDiabetesFromModal() {
+    if (schedulingDiabetes) return;
+    setSchedulingDiabetes(true);
+    try {
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.HIGH,
+        });
+      }
+
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permisos requeridos', 'Activa las notificaciones en Ajustes para recibir recordatorios.' );
+        return;
+      }
+
+      const savedTimes = await saveMealTimes(mealTimesDraft);
+      const savedRS = await saveReminderSettings(reminderSettingsDraft);
+      setMealTimes(savedTimes);
+      setMealTimesDraft(savedTimes);
+      setReminderSettings(savedRS);
+      setReminderSettingsDraft(savedRS);
+
+      // Best-effort: persist to server
+      try {
+        const current = await api.get('/settings');
+        const enableReminders = !!current?.data?.enable_reminders;
+        await api.put('/settings', {
+          meal_times: savedTimes,
+          reminder_settings: savedRS,
+          enable_reminders: enableReminders,
+        });
+      } catch (_) {
+        // ignore
+      }
+
+      const ok = await setupDiabetesNotifications({
+        mealTimes: savedTimes,
+        enableGlucoseReminders: true,
+        enableActivityReminders: true,
+        preMealMinutesBefore: savedRS.diabetesPreMealMinutesBefore,
+        glucoseHoursAfter: savedRS.diabetesGlucoseHoursAfter,
+        activityMinutesAfter: savedRS.diabetesActivityMinutesAfter,
+      });
+
+      if (ok) {
+        Alert.alert('✅ Listo', 'Notificaciones de diabetes programadas.');
+        setShowMealTimesModal(false);
+      } else {
+        Alert.alert('Error', 'No se pudieron programar las notificaciones de diabetes.');
+      }
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'No se pudieron programar las notificaciones');
+    } finally {
+      setSchedulingDiabetes(false);
+    }
+  }
+
+  const handleUploadPlanPdf = async () => {
+    if (uploading) return;
+    setUploading(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+      const asset = Array.isArray(result.assets) ? result.assets[0] : null;
+      if (!asset?.uri) {
+        Alert.alert('Error', 'No se pudo leer el archivo seleccionado.');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('pdf', {
+        uri: asset.uri,
+        name: asset.name || 'plan.pdf',
+        type: asset.mimeType || 'application/pdf',
+      });
+
+      await api.post('/meal-plan/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      Alert.alert('✅ Listo', 'Plan PDF cargado correctamente.');
+      setLoading(true);
+      await loadMealPlan();
+    } catch (error) {
+      const msg = error?.response?.data?.error || error?.message || 'No se pudo subir el PDF.';
+      Alert.alert('Error', msg);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const loadMealPlan = async () => {
     try {
@@ -143,8 +438,156 @@ export default function MealPlanScreen({ onNavigate }) {
           <Text style={styles.backBtnText}>← Atrás</Text>
         </TouchableOpacity>
         <Text style={styles.title}>🍽️ Mi Plan</Text>
-        <View style={{ width: 60 }} />
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={programarRecordatoriosComidas}
+            style={[styles.reminderBtn, schedulingMeals && styles.uploadBtnDisabled]}
+            disabled={schedulingMeals}
+          >
+            <Text style={styles.reminderBtnText}>{schedulingMeals ? '…' : '🔔'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              setMealTimesDraft(mealTimes);
+              setReminderSettingsDraft(reminderSettings);
+              setShowMealTimesModal(true);
+            }}
+            style={styles.reminderBtn}
+            accessibilityLabel="Editar horarios de comidas"
+          >
+            <Text style={styles.reminderBtnText}>⚙️</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleUploadPlanPdf}
+            style={[styles.uploadBtn, uploading && styles.uploadBtnDisabled]}
+            disabled={uploading}
+          >
+            <Text style={styles.uploadBtnText}>{uploading ? 'Subiendo…' : 'Subir PDF'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {showMealTimesModal && (
+        <Modal
+          visible={true}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowMealTimesModal(false)}
+        >
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowMealTimesModal(false)}>
+                <Text style={styles.closeBtn}>✕</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalHeaderTitle}>Horarios de comidas</Text>
+              <TouchableOpacity onPress={saveMealTimesFromModal}>
+                <Text style={styles.modalSaveBtn}>Guardar</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalContent}>
+              <View style={styles.section}>
+                <TouchableOpacity style={styles.timeRow} onPress={() => openMealTimePicker('breakfast')}>
+                  <Text style={styles.timeRowLabel}>Desayuno</Text>
+                  <Text style={styles.timeRowValue}>{mealTimesDraft.breakfast}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.timeRow} onPress={() => openMealTimePicker('lunch')}>
+                  <Text style={styles.timeRowLabel}>Comida</Text>
+                  <Text style={styles.timeRowValue}>{mealTimesDraft.lunch}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.timeRow} onPress={() => openMealTimePicker('dinner')}>
+                  <Text style={styles.timeRowLabel}>Cena</Text>
+                  <Text style={styles.timeRowValue}>{mealTimesDraft.dinner}</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.timeHint}>
+                  Estos horarios se usan para recordatorios (🔔) y para “ligada a comida” en Medicinas.
+                </Text>
+              </View>
+
+              <View style={styles.section}>
+                <Text style={styles.settingsSectionTitle}>Diabetes</Text>
+
+                <Text style={styles.settingsRowLabel}>Medicina antes de comidas (min)</Text>
+                <View style={styles.pillRow}>
+                  {[5, 10, 15, 20, 30, 45, 60].map((v) => (
+                    <TouchableOpacity
+                      key={`pre-${v}`}
+                      onPress={() => setDraftSetting('diabetesPreMealMinutesBefore', v)}
+                      style={[styles.pill, reminderSettingsDraft.diabetesPreMealMinutesBefore === v && styles.pillActive]}
+                    >
+                      <Text style={[styles.pillText, reminderSettingsDraft.diabetesPreMealMinutesBefore === v && styles.pillTextActive]}>{v}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.settingsRowLabel}>Glucosa después de comer (horas)</Text>
+                <View style={styles.pillRow}>
+                  {[1, 2, 3].map((v) => (
+                    <TouchableOpacity
+                      key={`glu-${v}`}
+                      onPress={() => setDraftSetting('diabetesGlucoseHoursAfter', v)}
+                      style={[styles.pill, reminderSettingsDraft.diabetesGlucoseHoursAfter === v && styles.pillActive]}
+                    >
+                      <Text style={[styles.pillText, reminderSettingsDraft.diabetesGlucoseHoursAfter === v && styles.pillTextActive]}>{v}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.settingsRowLabel}>Actividad después de comer (min)</Text>
+                <View style={styles.pillRow}>
+                  {[0, 10, 15, 30, 45, 60].map((v) => (
+                    <TouchableOpacity
+                      key={`act-${v}`}
+                      onPress={() => setDraftSetting('diabetesActivityMinutesAfter', v)}
+                      style={[styles.pill, reminderSettingsDraft.diabetesActivityMinutesAfter === v && styles.pillActive]}
+                    >
+                      <Text style={[styles.pillText, reminderSettingsDraft.diabetesActivityMinutesAfter === v && styles.pillTextActive]}>{v}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.timeHint}>
+                  Estos valores se usarán al programar notificaciones de diabetes.
+                </Text>
+
+                <TouchableOpacity
+                  onPress={saveAndScheduleDiabetesFromModal}
+                  style={[styles.primaryActionBtn, schedulingDiabetes && styles.uploadBtnDisabled]}
+                  disabled={schedulingDiabetes}
+                >
+                  <Text style={styles.primaryActionBtnText}>
+                    {schedulingDiabetes ? 'Programando…' : 'Programar notificaciones de diabetes'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {showTimePicker && (
+                <View style={styles.timePickerWrap}>
+                  <DateTimePicker
+                    value={timePickerValue}
+                    mode="time"
+                    is24Hour={true}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={onMealTimePicked}
+                  />
+                </View>
+              )}
+
+              {Platform.OS === 'ios' && (
+                <TouchableOpacity
+                  onPress={() => setShowTimePicker(false)}
+                  style={styles.doneBtn}
+                >
+                  <Text style={styles.doneBtnText}>Listo</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+      )}
 
       {plan ? (
         <ScrollView style={styles.content}>
@@ -206,7 +649,14 @@ export default function MealPlanScreen({ onNavigate }) {
       ) : (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>No hay plan de comidas</Text>
-          <Text style={styles.emptySubtext}>Contacta a tu nutricionista</Text>
+          <Text style={styles.emptySubtext}>Sube tu plan PDF o contacta a tu nutricionista</Text>
+          <TouchableOpacity
+            onPress={handleUploadPlanPdf}
+            style={[styles.uploadBtnLarge, uploading && styles.uploadBtnDisabled]}
+            disabled={uploading}
+          >
+            <Text style={styles.uploadBtnLargeText}>{uploading ? 'Subiendo…' : 'Subir Plan PDF'}</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -274,6 +724,150 @@ const styles = StyleSheet.create({
     color: '#3498db',
     fontSize: 14,
     fontWeight: '600',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  reminderBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reminderBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
+  },
+  modalSaveBtn: {
+    color: '#3498db',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  timeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  timeRowLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  timeRowValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  timeHint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#666',
+    lineHeight: 16,
+  },
+  settingsSectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 8,
+    color: '#111827',
+  },
+  settingsRowLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#374151',
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  pill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  pillActive: {
+    backgroundColor: '#3498db',
+    borderColor: '#3498db',
+  },
+  pillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#374151',
+  },
+  pillTextActive: {
+    color: '#fff',
+  },
+  primaryActionBtn: {
+    marginTop: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#3498db',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryActionBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  timePickerWrap: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  doneBtn: {
+    marginTop: 10,
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: '#3498db',
+    borderRadius: 10,
+  },
+  doneBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  uploadBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#3498db',
+    borderRadius: 8,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadBtnDisabled: {
+    opacity: 0.6,
+  },
+  uploadBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   content: {
     padding: 15,
@@ -385,13 +979,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#bbb',
   },
+  uploadBtnLarge: {
+    marginTop: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#3498db',
+    borderRadius: 10,
+  },
+  uploadBtnLargeText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: '#fff',
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',

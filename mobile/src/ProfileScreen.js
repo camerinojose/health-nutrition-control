@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Button, ActivityIndicator, Alert, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import api from './api';
 import HealthProfileForm from './HealthProfileForm';
+
+const HEALTH_PROFILE_STORAGE_KEY = 'bienestar_health_profile_v1';
 
 export default function ProfileScreen({ onNavigate }) {
   const [profile, setProfile] = useState(null);
@@ -14,12 +18,38 @@ export default function ProfileScreen({ onNavigate }) {
   const loadProfile = async () => {
     setLoading(true);
     try {
-      // Reemplaza esta llamada por tu API real
-      // const res = await api.get('/health-profile');
-      // setProfile(res.data);
-      setProfile(null); // Simulación: no hay perfil aún
+      const res = await api.get('/health-profile');
+
+      // Backend can return either { profile: null } or a profile object
+      if (res?.data && typeof res.data === 'object' && Object.prototype.hasOwnProperty.call(res.data, 'profile')) {
+        setProfile(res.data.profile);
+      } else {
+        setProfile(res.data);
+      }
+
+      try {
+        if (res?.data) {
+          await AsyncStorage.setItem(HEALTH_PROFILE_STORAGE_KEY, JSON.stringify(res.data));
+        }
+      } catch (_) {
+        // ignore
+      }
     } catch (e) {
-      Alert.alert('Error', 'No se pudo cargar el perfil');
+      try {
+        const raw = await AsyncStorage.getItem(HEALTH_PROFILE_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'profile')) {
+            setProfile(parsed.profile);
+          } else {
+            setProfile(parsed);
+          }
+        } else {
+          setProfile(null);
+        }
+      } catch (_) {
+        setProfile(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -28,13 +58,56 @@ export default function ProfileScreen({ onNavigate }) {
   const handleSave = async (data) => {
     setLoading(true);
     try {
-      // Reemplaza por tu API real
-      // await api.post('/health-profile', data);
-      setProfile(data);
+      // Create vs update
+      if (profile) {
+        try {
+          await api.put('/health-profile', data);
+        } catch (err) {
+          // If backend returns 404 because profile doesn't exist yet, fallback to create
+          if (err?.response?.status === 404) {
+            await api.post('/health-profile', data);
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        try {
+          await api.post('/health-profile', data);
+        } catch (err) {
+          // If it already exists, fallback to update
+          if (err?.response?.status === 409) {
+            await api.put('/health-profile', data);
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      const refreshed = await api.get('/health-profile');
+      const newProfile = refreshed?.data && typeof refreshed.data === 'object' && Object.prototype.hasOwnProperty.call(refreshed.data, 'profile')
+        ? refreshed.data.profile
+        : refreshed.data;
+
+      setProfile(newProfile);
+
+      try {
+        await AsyncStorage.setItem(HEALTH_PROFILE_STORAGE_KEY, JSON.stringify(refreshed.data));
+      } catch (_) {
+        // ignore
+      }
+
       setEditing(false);
       Alert.alert('Éxito', 'Perfil guardado correctamente');
     } catch (e) {
-      Alert.alert('Error', 'No se pudo guardar el perfil');
+      // Offline/local fallback
+      setProfile(data);
+      try {
+        await AsyncStorage.setItem(HEALTH_PROFILE_STORAGE_KEY, JSON.stringify(data));
+      } catch (_) {
+        // ignore
+      }
+      setEditing(false);
+      Alert.alert('Aviso', 'No se pudo guardar en el servidor. Se guardó localmente en este dispositivo.');
     } finally {
       setLoading(false);
     }

@@ -56,10 +56,18 @@ Forwarding: https://nonillusional-searingly-loren.ngrok-free.dev -> http://local
 
 ## Step 3: Create Test Accounts
 
+### Option 0: Use Default Seeded Accounts (Fastest)
+If you're running locally with SQLite, the backend seeds these accounts automatically:
+- User: `user@test.com` / `password123`
+- Nutritionist: `nutritionist@test.com` / `password123`
+- Admin: `admin@test.com` / `password123`
+
+If login fails (especially after older runs), delete `backend/data.db` and restart the backend so it recreates the DB and re-seeds users.
+
 ### Create User Account
 1. Open mobile app → Register
 2. Email: `user@test.com`
-3. Password: `Test123!@#`
+3. Password: `password123`
 4. Complete health profile:
    - Age: 30
    - Height: 175 cm
@@ -71,7 +79,7 @@ Forwarding: https://nonillusional-searingly-loren.ngrok-free.dev -> http://local
 1. Open web frontend (http://localhost:5174)
 2. Register with:
    - Email: `nutritionist@test.com`
-   - Password: `Nutri123!@#`
+   - Password: `password123`
    - Role: Nutritionist
 
 Or in mobile app:

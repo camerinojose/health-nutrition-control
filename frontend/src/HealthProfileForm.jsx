@@ -3,6 +3,147 @@ import { useTranslation } from 'react-i18next';
 import api from './api';
 import './healthProfile.css';
 
+const mealScheduleOptions = [
+  { value: '', labelKey: 'select' },
+  { value: 'regular_3', labelKey: 'mealScheduleOptionRegular3' },
+  { value: 'regular_5', labelKey: 'mealScheduleOptionRegular5' },
+  { value: 'irregular', labelKey: 'mealScheduleOptionIrregular' },
+  { value: 'shifts', labelKey: 'mealScheduleOptionShifts' },
+  { value: 'intermittent_fasting', labelKey: 'mealScheduleOptionIntermittentFasting' },
+  { value: 'custom', labelKey: 'mealScheduleOptionCustom' },
+];
+
+const allowedMealScheduleValues = new Set(mealScheduleOptions.map((o) => o.value));
+
+const normalizeMealSchedule = (value) => {
+  if (!value) return { meal_schedule: '', meal_schedule_custom: '' };
+  const v = String(value).trim();
+  const lower = v.toLowerCase();
+  if (allowedMealScheduleValues.has(v)) return { meal_schedule: v, meal_schedule_custom: '' };
+  if (allowedMealScheduleValues.has(lower)) return { meal_schedule: lower, meal_schedule_custom: '' };
+  return { meal_schedule: 'custom', meal_schedule_custom: v };
+};
+
+const medicalConditionOptions = [
+  {
+    code: 'none',
+    labelKey: 'medicalConditionsNone',
+    matchTokens: ['none', 'ninguna', 'no', 'na'],
+    exclusive: true,
+  },
+  {
+    code: 'diabetes2',
+    labelKey: 'medicalConditionDiabetes2',
+    matchTokens: ['diabetes tipo 2', 'type 2 diabetes', 't2d', 'diabetes2', 'diabetes'],
+  },
+  {
+    code: 'hypertension',
+    labelKey: 'medicalConditionHypertension',
+    matchTokens: ['hipertensión', 'hipertension', 'hypertension', 'hta'],
+  },
+  {
+    code: 'hypothyroidism',
+    labelKey: 'medicalConditionHypothyroidism',
+    matchTokens: ['hipotiroidismo', 'hypothyroidism'],
+  },
+  {
+    code: 'high_cholesterol',
+    labelKey: 'medicalConditionHighCholesterol',
+    matchTokens: ['colesterol alto', 'high cholesterol', 'cholesterol'],
+  },
+  {
+    code: 'high_triglycerides',
+    labelKey: 'medicalConditionHighTriglycerides',
+    matchTokens: ['triglicéridos altos', 'trigliceridos altos', 'high triglycerides', 'triglycerides'],
+  },
+  {
+    code: 'obesity',
+    labelKey: 'medicalConditionObesity',
+    matchTokens: ['obesidad', 'obesity'],
+  },
+];
+
+const allergyOptions = [
+  {
+    code: 'none',
+    labelKey: 'allergiesNone',
+    matchTokens: ['none', 'ninguna', 'no', 'na'],
+    exclusive: true,
+  },
+  { code: 'lactose', labelKey: 'allergyLactose', matchTokens: ['lactosa', 'lactose', 'dairy'] },
+  { code: 'gluten', labelKey: 'allergyGluten', matchTokens: ['gluten'] },
+  { code: 'nuts', labelKey: 'allergyNuts', matchTokens: ['nueces', 'nuts', 'nut'] },
+  { code: 'shellfish', labelKey: 'allergyShellfish', matchTokens: ['mariscos', 'shellfish'] },
+  { code: 'egg', labelKey: 'allergyEgg', matchTokens: ['huevo', 'egg'] },
+];
+
+const splitListText = (value) => {
+  if (!value) return [];
+  return String(value)
+    .split(/[\n,;•]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+};
+
+const parseSelectionsFromText = (value, options) => {
+  const parts = splitListText(value);
+  if (parts.length === 0) return { selected: [], custom: '' };
+
+  const selected = new Set();
+  const unmatched = [];
+
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    const match = options.find((opt) => opt.matchTokens?.some((token) => lower.includes(String(token).toLowerCase())));
+    if (match) {
+      selected.add(match.code);
+    } else {
+      unmatched.push(part);
+    }
+  }
+
+  const hasExclusiveNone = selected.has('none');
+  if (hasExclusiveNone) {
+    return { selected: ['none'], custom: unmatched.join(', ') };
+  }
+
+  return { selected: Array.from(selected), custom: unmatched.join(', ') };
+};
+
+const joinSelectionsToText = (selectedCodes, customText, options, t) => {
+  const selectedSet = new Set(selectedCodes || []);
+  const noneSelected = selectedSet.has('none');
+
+  const labels = noneSelected
+    ? [t(options.find((o) => o.code === 'none')?.labelKey || 'select')]
+    : options
+        .filter((o) => o.code !== 'none' && selectedSet.has(o.code))
+        .map((o) => t(o.labelKey));
+
+  const custom = String(customText || '').trim();
+  const allParts = [...labels, ...(custom ? [custom] : [])].filter(Boolean);
+  return allParts.join(', ');
+};
+
+const toggleMultiSelect = (current, code, options) => {
+  const currentSet = new Set(current || []);
+  const isExclusive = options.find((o) => o.code === code)?.exclusive;
+
+  if (currentSet.has(code)) {
+    currentSet.delete(code);
+  } else {
+    if (isExclusive) {
+      currentSet.clear();
+      currentSet.add(code);
+    } else {
+      currentSet.delete('none');
+      currentSet.add(code);
+    }
+  }
+
+  return Array.from(currentSet);
+};
+
 function HealthProfileForm({ onClose, onSave }) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -16,8 +157,12 @@ function HealthProfileForm({ onClose, onSave }) {
     goal_weight: '',
     waist_circumference: '',
     medical_conditions: '',
+    medical_conditions_selected: [],
+    medical_conditions_custom: '',
     medications: '',
     allergies: '',
+    allergies_selected: [],
+    allergies_custom: '',
     glucose_fasting: '',
     hba1c: '',
     cholesterol_total: '',
@@ -26,6 +171,7 @@ function HealthProfileForm({ onClose, onSave }) {
     triglycerides: '',
     activity_level: '',
     meal_schedule: '',
+    meal_schedule_custom: '',
     sleep_hours: '',
     goals: ''
   });
@@ -38,15 +184,48 @@ function HealthProfileForm({ onClose, onSave }) {
     try {
       const res = await api.get('/health-profile');
       if (res.data && res.data.id) {
-        setProfile(res.data);
+        const normalizedMealSchedule = normalizeMealSchedule(res.data.meal_schedule);
+        const parsedMedical = parseSelectionsFromText(res.data.medical_conditions, medicalConditionOptions);
+        const parsedAllergies = parseSelectionsFromText(res.data.allergies, allergyOptions);
+        setProfile({
+          ...res.data,
+          meal_schedule: normalizedMealSchedule.meal_schedule,
+          meal_schedule_custom: normalizedMealSchedule.meal_schedule_custom,
+          medical_conditions_selected: parsedMedical.selected,
+          medical_conditions_custom: parsedMedical.custom,
+          allergies_selected: parsedAllergies.selected,
+          allergies_custom: parsedAllergies.custom,
+        });
       }
     } catch (err) {
       console.error('Error loading profile:', err);
     }
   };
 
+  const toggleMedicalCondition = (code) => {
+    setProfile((prev) => ({
+      ...prev,
+      medical_conditions_selected: toggleMultiSelect(prev.medical_conditions_selected, code, medicalConditionOptions),
+    }));
+  };
+
+  const toggleAllergy = (code) => {
+    setProfile((prev) => ({
+      ...prev,
+      allergies_selected: toggleMultiSelect(prev.allergies_selected, code, allergyOptions),
+    }));
+  };
+
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === 'meal_schedule') {
+      setProfile(prev => ({
+        ...prev,
+        meal_schedule: value,
+        meal_schedule_custom: value === 'custom' ? prev.meal_schedule_custom : '',
+      }));
+      return;
+    }
     setProfile(prev => ({ ...prev, [name]: value }));
   };
 
@@ -74,6 +253,9 @@ function HealthProfileForm({ onClose, onSave }) {
       const isUpdate = profile.id;
       const cleanedProfile = {
         ...profile,
+        meal_schedule: profile.meal_schedule === 'custom' ? profile.meal_schedule_custom : profile.meal_schedule,
+        medical_conditions: joinSelectionsToText(profile.medical_conditions_selected, profile.medical_conditions_custom, medicalConditionOptions, t),
+        allergies: joinSelectionsToText(profile.allergies_selected, profile.allergies_custom, allergyOptions, t),
         age: profile.age ? parseInt(profile.age) : 0,
         height: profile.height ? parseFloat(profile.height) : 0,
         current_weight: profile.current_weight ? parseFloat(profile.current_weight) : 0,
@@ -87,6 +269,12 @@ function HealthProfileForm({ onClose, onSave }) {
         triglycerides: profile.triglycerides ? parseFloat(profile.triglycerides) : 0,
         sleep_hours: profile.sleep_hours ? parseFloat(profile.sleep_hours) : 0,
       };
+
+      delete cleanedProfile.meal_schedule_custom;
+      delete cleanedProfile.medical_conditions_selected;
+      delete cleanedProfile.medical_conditions_custom;
+      delete cleanedProfile.allergies_selected;
+      delete cleanedProfile.allergies_custom;
 
       let res;
       if (isUpdate) {
@@ -112,7 +300,7 @@ function HealthProfileForm({ onClose, onSave }) {
           <button className="close-btn" onClick={onClose}>✕</button>
         </div>
 
-        <form onSubmit={handleSubmit} className="health-profile-form">
+        <form onSubmit={handleSubmit} className="health-profile-form" noValidate>
           {error && <div className="error-message">{error}</div>}
 
           {/* Disclaimer */}
@@ -166,12 +354,24 @@ function HealthProfileForm({ onClose, onSave }) {
             <h3>{t('medicalHistory')}</h3>
             <div className="form-group">
               <label>{t('medicalConditions')}</label>
-              <textarea 
-                name="medical_conditions" 
-                value={profile.medical_conditions} 
+              <div className="checkbox-grid">
+                {medicalConditionOptions.map((opt) => (
+                  <label key={opt.code} className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={(profile.medical_conditions_selected || []).includes(opt.code)}
+                      onChange={() => toggleMedicalCondition(opt.code)}
+                    />
+                    <span>{t(opt.labelKey)}</span>
+                  </label>
+                ))}
+              </div>
+              <textarea
+                name="medical_conditions_custom"
+                value={profile.medical_conditions_custom}
                 onChange={handleChange}
-                placeholder={t('medicalConditionsPlaceholder')}
-                rows="3"
+                placeholder={t('medicalConditionsDetailsPlaceholder')}
+                rows="2"
               />
             </div>
             <div className="form-group">
@@ -186,11 +386,23 @@ function HealthProfileForm({ onClose, onSave }) {
             </div>
             <div className="form-group">
               <label>{t('allergies')}</label>
-              <textarea 
-                name="allergies" 
-                value={profile.allergies} 
+              <div className="checkbox-grid">
+                {allergyOptions.map((opt) => (
+                  <label key={opt.code} className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={(profile.allergies_selected || []).includes(opt.code)}
+                      onChange={() => toggleAllergy(opt.code)}
+                    />
+                    <span>{t(opt.labelKey)}</span>
+                  </label>
+                ))}
+              </div>
+              <textarea
+                name="allergies_custom"
+                value={profile.allergies_custom}
                 onChange={handleChange}
-                placeholder={t('allergiesPlaceholder')}
+                placeholder={t('allergiesDetailsPlaceholder')}
                 rows="2"
               />
             </div>
@@ -243,13 +455,22 @@ function HealthProfileForm({ onClose, onSave }) {
             </div>
             <div className="form-group">
               <label>{t('mealSchedule')}</label>
-              <textarea 
-                name="meal_schedule" 
-                value={profile.meal_schedule} 
-                onChange={handleChange}
-                placeholder={t('mealSchedulePlaceholder')}
-                rows="2"
-              />
+              <select name="meal_schedule" value={profile.meal_schedule} onChange={handleChange}>
+                {mealScheduleOptions.map((opt) => (
+                  <option key={opt.value || 'empty'} value={opt.value}>
+                    {t(opt.labelKey)}
+                  </option>
+                ))}
+              </select>
+              {profile.meal_schedule === 'custom' && (
+                <textarea
+                  name="meal_schedule_custom"
+                  value={profile.meal_schedule_custom}
+                  onChange={handleChange}
+                  placeholder={t('mealScheduleCustomPlaceholder')}
+                  rows="2"
+                />
+              )}
             </div>
             <div className="form-group">
               <label>{t('sleepHours')}</label>

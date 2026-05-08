@@ -113,6 +113,13 @@ export async function sendPushTokenToBackend(token, authToken, backendUrl) {
  */
 export async function scheduleTestNotification() {
   try {
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'default',
+        importance: Notifications.AndroidImportance.HIGH,
+      });
+    }
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '🎉 ¡Notificaciones funcionando!',
@@ -120,7 +127,11 @@ export async function scheduleTestNotification() {
         data: { type: 'test' },
         sound: true,
       },
-      trigger: { seconds: 2 },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 2,
+        ...(Platform.OS === 'android' ? { channelId: 'default' } : {}),
+      },
     });
     
     console.log('✅ Notificación de prueba programada');

@@ -10,6 +10,8 @@ i18n.use(initReactI18next).init({
   },
   lng: 'es',
   fallbackLng: 'en',
+  compatibilityJSON: 'v3',
+  debug: false,
   interpolation: { escapeValue: false },
   react: {
     useSuspense: false

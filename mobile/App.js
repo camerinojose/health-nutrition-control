@@ -38,7 +38,7 @@ import NutritionistRecommendationsScreen from './src/nutritionist/Recommendation
 import NutritionistMealPlansScreen from './src/nutritionist/MealPlansScreen'
 
 // Configura tu URL de backend
-const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://bienestarapp-backend.onrender.com').replace(/\/api$/, '')
+const BACKEND_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://health-nutrition-control.onrender.com').replace(/\/api$/, '')
 
 // Función para determinar la temporada actual
 function getCurrentSeason() {
@@ -87,6 +87,13 @@ export default function App() {
       // Solicitar permisos al iniciar la app
       (async () => {
         try {
+          if (Platform.OS === 'android') {
+            await Notifications.setNotificationChannelAsync('default', {
+              name: 'default',
+              importance: Notifications.AndroidImportance.HIGH,
+            });
+          }
+
           const { status } = await Notifications.requestPermissionsAsync();
           if (status !== 'granted') {
             alert('Permiso de notificaciones no concedido');
@@ -116,9 +123,10 @@ export default function App() {
           body: 'Revisa tus recomendaciones y prepárate para tu próxima comida.',
         },
         trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
           hour: 12, // Cambia la hora según tu preferencia
           minute: 0,
-          repeats: true, // Se repite diariamente
+          ...(Platform.OS === 'android' ? { channelId: 'default' } : {}),
         },
       });
       alert('Notificación diaria programada a las 12:00');
@@ -130,6 +138,7 @@ export default function App() {
   const [appIsReady, setAppIsReady] = useState(false);
   const [token, setToken] = useState(null)
   const [view, setView] = useState('home') // home | login | register | dashboard | mealplan | progress | achievements | recipes | appointments | messages | support | settings
+  const [postLoginTarget, setPostLoginTarget] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
@@ -156,6 +165,7 @@ export default function App() {
     { icon: '📊', title: t('home_feature_progress'), desc: t('home_feature_progress_desc') },
     { icon: '📝', title: t('home_feature_ocr'), desc: t('home_feature_ocr_desc') },
     { icon: '🍱', title: t('home_feature_mealplan'), desc: t('home_feature_mealplan_desc') },
+    { icon: '💊', title: t('home_feature_medicines') || 'Medicinas', desc: t('home_feature_medicines_desc') || 'Gestiona tus medicinas y programa recordatorios.' },
     { icon: '💬', title: t('home_feature_support'), desc: t('home_feature_support_desc') },
   ]
 
@@ -300,15 +310,27 @@ export default function App() {
     setEmail('');
     setPassword('');
 
+    const nextView = postLoginTarget || 'home'
+    setPostLoginTarget(null)
+
     try {
       console.log('[completeLogin] Fetching profile...');
       await fetchProfile(token);
       console.log('[completeLogin] Profile fetched successfully, setting view to dashboard');
-      setView('dashboard');
+      setView(nextView);
     } catch (e) {
       console.warn('[completeLogin] Profile fetch failed:', e);
-      setView('dashboard');
+      setView(nextView);
     }
+  }
+
+  function goToProtected(target) {
+    if (token) {
+      setView(target)
+      return
+    }
+    setPostLoginTarget(target)
+    setView('login')
   }
 
   // Handle deep link from OAuth callback
@@ -359,6 +381,7 @@ export default function App() {
         if (tk) {
           console.log('Token found, setting...');
           setToken(tk);
+          setView('home');
           // Start listening for notifications (skip in Expo Go on Android)
           if (!skipNotifications) {
             await startNotificationListening();
@@ -377,7 +400,7 @@ export default function App() {
           if (token) {
             await saveToken(token);
             setToken(token);
-            setView('dashboard');
+            setView('home');
             if (!skipNotifications) {
               await startNotificationListening();
             } else {
@@ -651,11 +674,25 @@ export default function App() {
     }
   }
 
-  // Normalize navigation targets so screens that call 'home' come back to dashboard
+  function getBackTarget(currentView) {
+    if (currentView === 'diabetesNotifications') return 'profile'
+    if (currentView === 'medicinas') return 'home'
+    if (currentView === 'login' || currentView === 'register') return 'home'
+    if (currentView === 'dashboard') return 'home'
+    return 'home'
+  }
+
+  function handleBackPress() {
+    if (drawerOpen) {
+      closeDrawer()
+      return
+    }
+    setView(getBackTarget(view))
+  }
+
   function navigate(nextView) {
-    const target = nextView === 'home' ? 'dashboard' : nextView
-    console.log('[navigate] Changing view to:', target)
-    setView(target)
+    console.log('[navigate] Changing view to:', nextView)
+    setView(nextView)
     setDrawerOpen(false)
   }
 
@@ -675,7 +712,7 @@ export default function App() {
   const renderContent = () => {
     if (view === 'medicinas') {
       console.log('[renderContent] Showing MedicinesScreen');
-      return <MedicinesScreen onBack={() => { console.log('[MedicinesScreen] onBack called, setting view to dashboard'); setView('dashboard'); }} />;
+      return <MedicinesScreen onBack={() => { console.log('[MedicinesScreen] onBack called, setting view to home'); setView('home'); }} />;
     }
     if (view === 'diabetesNotifications') {
       console.log('[renderContent] Showing DiabetesNotificationsScreen');
@@ -685,16 +722,6 @@ export default function App() {
       const ProfileScreen = require('./src/ProfileScreen').default;
       return <ProfileScreen onNavigate={(v) => setView(v)} />;
     }
-          // Botón de ejemplo para programar notificación (puedes moverlo donde gustes)
-          if (view === 'dashboard') {
-            return (
-              <View>
-                {/* ...existing dashboard code... */}
-                <Button title="Programar notificación diaria" onPress={programarNotificacionComida} />
-                <Button title="Ir a Medicinas" onPress={()=>setView('medicinas')} />
-              </View>
-            );
-          }
     try {
       if (view === 'login') {
         return (
@@ -729,7 +756,7 @@ export default function App() {
                 <Text style={{fontSize: 16, fontWeight: '500', color: '#3c4043'}}>Continuar con Google</Text>
               </TouchableOpacity>
             </View>
-            <Button title="Volver" onPress={() => setView('dashboard')} />
+            <Button title="Volver" onPress={() => setView('home')} />
           </View>
         );
       }
@@ -741,7 +768,7 @@ export default function App() {
             <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} />
             <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry />
             <Button title="Register" onPress={handleRegister} />
-            <Button title="Volver" onPress={() => setView('dashboard')} />
+            <Button title="Volver" onPress={() => setView('home')} />
           </View>
         );
       }
@@ -832,51 +859,111 @@ export default function App() {
       }
       
       return (
-        <ImageBackground 
-          source={{ uri: getSeasonalFoodImage() }}
-          style={{flex: 1}}
-          resizeMode="cover"
-          onError={(e) => {
-            console.log('Background image failed to load:', e.nativeEvent.error);
-            setImageError(true);
-          }}
-        >
-          {/* Overlay oscuro para mejorar la legibilidad */}
-          <View style={{
-            flex: 1,
-            backgroundColor: imageError ? 'rgba(45, 80, 22, 0.85)' : 'rgba(0, 0, 0, 0.5)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            paddingHorizontal: 20,
-          }}>
-            {imageError && (
-              <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'space-evenly', alignItems: 'center', opacity: 0.15}}>
-                <Text style={{fontSize: 80}}>🥗</Text>
-                <Text style={{fontSize: 80}}>🍎</Text>
-                <Text style={{fontSize: 80}}>🥑</Text>
-                <Text style={{fontSize: 80}}>🥕</Text>
-                <Text style={{fontSize: 80}}>🍊</Text>
+        <ScrollView style={{flex: 1, backgroundColor: '#f5f7fa'}} contentContainerStyle={{paddingBottom: 24}}>
+          <ImageBackground
+            source={{ uri: getSeasonalFoodImage() }}
+            style={{minHeight: 340}}
+            resizeMode="cover"
+            onError={(e) => {
+              console.log('Background image failed to load:', e.nativeEvent.error);
+              setImageError(true);
+            }}
+          >
+            <View style={{
+              flex: 1,
+              minHeight: 340,
+              backgroundColor: imageError ? 'rgba(45, 80, 22, 0.85)' : 'rgba(0, 0, 0, 0.5)',
+              paddingHorizontal: 20,
+              paddingTop: 28,
+              paddingBottom: 18,
+              justifyContent: 'flex-end',
+            }}>
+              <Text style={{fontSize: 30, fontWeight: '800', color: '#fff', marginBottom: 8}}>
+                {t('welcome_title') || 'BienestarApp'}
+              </Text>
+              <Text style={{fontSize: 16, color: '#fff', marginBottom: 16, opacity: 0.95}}>
+                {t('welcome_subtitle') || 'Tu salud, nuestra prioridad'}
+              </Text>
+
+              {!token && (
+                <View style={{flexDirection: 'row', gap: 10, marginBottom: 14}}>
+                  <TouchableOpacity
+                    style={{flex: 1, backgroundColor: '#4CAF50', paddingVertical: 14, borderRadius: 10, alignItems: 'center'}}
+                    onPress={() => setView('login')}
+                  >
+                    <Text style={{color: '#fff', fontSize: 16, fontWeight: '700'}}>{t('login') || 'Iniciar Sesión'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.9)', paddingVertical: 14, borderRadius: 10, borderWidth: 1, borderColor: '#fff', alignItems: 'center'}}
+                    onPress={() => setView('register')}
+                  >
+                    <Text style={{color: '#2d5016', fontSize: 16, fontWeight: '700'}}>{t('register') || 'Registrarse'}</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <View style={{backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, padding: 12}}>
+                <Text style={{color: '#fff', fontWeight: '800', marginBottom: 4}}>
+                  💡 {t('dailyRecommendation') || 'Recomendación del día'}
+                </Text>
+                <Text style={{color: '#fff', opacity: 0.95}}>{t('seasonalTip') || 'Pequeños cambios diarios hacen una gran diferencia.'}</Text>
               </View>
-            )}
-            
-            <Text style={{fontSize: 36, fontWeight: 'bold', color: '#fff', marginBottom: 15, textShadowColor: 'rgba(0, 0, 0, 0.8)', textShadowOffset: {width: 2, height: 2}, textShadowRadius: 5}}>BienestarApp</Text>
-            <Text style={{fontSize: 18, color: '#fff', marginBottom: 50, textShadowColor: 'rgba(0, 0, 0, 0.8)', textShadowOffset: {width: 1, height: 1}, textShadowRadius: 3}}>Tu salud, nuestra prioridad</Text>
-            
-            <TouchableOpacity 
-              style={{backgroundColor: '#4CAF50', paddingVertical: 16, paddingHorizontal: 40, borderRadius: 10, marginBottom: 15, width: '85%', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5, elevation: 5}}
-              onPress={()=>setView('login')}
-            >
-              <Text style={{color: '#fff', fontSize: 18, fontWeight: '700'}}>Iniciar Sesión</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={{backgroundColor: 'rgba(255, 255, 255, 0.9)', paddingVertical: 16, paddingHorizontal: 40, borderRadius: 10, borderWidth: 2, borderColor: '#fff', width: '85%', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5, elevation: 5}}
-              onPress={()=>setView('register')}
-            >
-              <Text style={{color: '#2d5016', fontSize: 18, fontWeight: '700'}}>Registrarse</Text>
-            </TouchableOpacity>
+            </View>
+          </ImageBackground>
+
+          <View style={{paddingHorizontal: 16, marginTop: 16}}>
+            <Text style={{fontSize: 18, fontWeight: '800', marginBottom: 10}}>{t('home_feature_title') || t('home_features') || 'Funciones principales'}</Text>
+            <View style={{gap: 10}}>
+              {featureCards.map((f) => {
+                const target = f.icon === '📊'
+                  ? 'progress'
+                  : f.icon === '📝'
+                    ? 'profile'
+                    : f.icon === '🍱'
+                      ? 'mealplan'
+                      : f.icon === '💊'
+                        ? 'medicinas'
+                      : 'support'
+
+                return (
+                  <TouchableOpacity
+                    key={f.title}
+                    style={{backgroundColor: '#fff', borderRadius: 12, padding: 14, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e9eef5'}}
+                    onPress={() => goToProtected(target)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{width: 44, height: 44, borderRadius: 12, backgroundColor: '#f5f7fa', alignItems: 'center', justifyContent: 'center', marginRight: 12}}>
+                      <Text style={{fontSize: 22}}>{f.icon}</Text>
+                    </View>
+                    <View style={{flex: 1}}>
+                      <Text style={{fontSize: 16, fontWeight: '800', marginBottom: 2}}>{f.title}</Text>
+                      <Text style={{color: '#566', lineHeight: 18}}>{f.desc}</Text>
+                    </View>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
           </View>
-        </ImageBackground>
+
+          <View style={{paddingHorizontal: 16, marginTop: 18}}>
+            <Text style={{fontSize: 18, fontWeight: '800', marginBottom: 6}}>{t('home_steps_title') || 'Cómo funciona'}</Text>
+            <Text style={{color: '#566', marginBottom: 10}}>{t('home_steps_subtitle') || 'En 3 pasos'}</Text>
+
+            <View style={{gap: 10}}>
+              {steps.map((s) => (
+                <View key={s.label} style={{backgroundColor: '#fff', borderRadius: 12, padding: 14, flexDirection: 'row', borderWidth: 1, borderColor: '#e9eef5'}}>
+                  <View style={{width: 34, height: 34, borderRadius: 10, backgroundColor: '#f5f7fa', alignItems: 'center', justifyContent: 'center', marginRight: 12}}>
+                    <Text style={{fontWeight: '900'}}>{s.label}</Text>
+                  </View>
+                  <View style={{flex: 1}}>
+                    <Text style={{fontSize: 15, fontWeight: '800', marginBottom: 2}}>{s.title}</Text>
+                    <Text style={{color: '#566', lineHeight: 18}}>{s.desc}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
       );
     } catch (err) {
       console.error('renderContent error:', err);
@@ -891,18 +978,25 @@ export default function App() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={{fontSize: 20, fontWeight: 'bold', color: '#1e88e5'}}>BIENESTAR</Text>
+        <View style={{flexDirection: 'row', alignItems: 'center', gap: 10}}>
+          {view !== 'home' && (
+            <TouchableOpacity onPress={handleBackPress} style={{paddingVertical: 6, paddingHorizontal: 8}}>
+              <Text style={{fontSize: 20}}>←</Text>
+            </TouchableOpacity>
+          )}
+          <Text style={{fontSize: 20, fontWeight: 'bold', color: '#1e88e5'}}>BIENESTAR</Text>
+        </View>
         <TouchableOpacity onPress={toggleDrawer} style={{marginLeft: 10}}>
           <Text style={{fontSize: 24}}>☰</Text>
         </TouchableOpacity>
       </View>
+      {renderContent()}
       {/* Drawer lateral */}
       {drawerOpen && (
         <View style={styles.drawerOverlay}>
-          <TouchableOpacity style={styles.drawerBackdrop} onPress={closeDrawer} />
           <Animated.View style={[styles.drawerPane, { transform: [{ translateX: drawerAnim }] }]}> 
             <Text style={{fontWeight: 'bold', fontSize: 18, marginBottom: 16}}>Menú</Text>
-            <TouchableOpacity style={styles.navButton} onPress={() => { setView('dashboard'); closeDrawer(); }}>
+            <TouchableOpacity style={styles.navButton} onPress={() => { setView('home'); closeDrawer(); }}>
               <Text style={styles.navButtonText}>🏠 Inicio</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.navButton} onPress={() => { setView('profile'); closeDrawer(); }}>
@@ -927,9 +1021,9 @@ export default function App() {
               <Text style={styles.logoutText}>Cerrar sesión</Text>
             </TouchableOpacity>
           </Animated.View>
+          <TouchableOpacity style={styles.drawerBackdrop} onPress={closeDrawer} />
         </View>
       )}
-      {renderContent()}
     </SafeAreaView>
   )
 }
@@ -1505,6 +1599,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     flexDirection: 'row',
+    zIndex: 1000,
+    elevation: 1000,
   },
   drawerBackdrop: {
     flex: 1,
